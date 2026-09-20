@@ -40,7 +40,14 @@ class BridgeClient:
     async def usage(self, peer_url: str) -> dict:
         return await self._get(peer_url, "/bridge/usage")
 
-    async def ask(self, peer_url: str, prompt: str, model: str | None = None) -> BridgeResult:
+    async def ask(
+        self,
+        peer_url: str,
+        prompt: str,
+        model: str | None = None,
+        *,
+        read_only: bool = False,
+    ) -> BridgeResult:
         if not prompt.strip():
             raise ValueError("prompt must contain text")
         if model is not None and (not isinstance(model, str) or not model.strip()):
@@ -55,6 +62,8 @@ class BridgeClient:
                 message = new_text_message(prompt, role=Role.ROLE_USER)
                 if model is not None:
                     message.metadata["agent_bridge.model"] = model.strip()
+                if read_only:
+                    message.metadata["agent_bridge.read_only"] = True
                 request = SendMessageRequest(message=message)
                 last = None
                 async for item in client.send_message(request):

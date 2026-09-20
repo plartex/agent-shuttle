@@ -65,11 +65,66 @@ $env:BRIDGE_AGY_COMMAND = 'C:\path\to\agy.exe'
 | `ask_codex(prompt, model?)` | Поставить задачу Codex |
 | `get_antigravity_info()` | Получить модели, effort и квоты Antigravity |
 | `get_codex_info()` | Получить модели, effort и квоты Codex |
+| `evaluate(target_type, target, ...)` | Проверить сниппет, файл или проект пакетами LLM-правил |
 
 ```text
 ask_antigravity(prompt="Проверь тесты", model="gemini-3.8-flash-medium")
 ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra")
 ```
+
+## Проверка качества кода
+
+Встроенный профиль `code_smells` содержит 80 правил. LLM-агент выполняет их пакетами, а мост локально проверяет структуру ответа, агрегирует результаты и рассчитывает итоговую оценку. Анализ только выявляет запахи: он не предлагает исправления и не изменяет код.
+
+Цель всегда задаётся явно:
+
+```powershell
+# Фрагмент кода
+& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate snippet `
+  --code 'def process_order(): ...' --language python
+
+# Один файл
+& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file .\src\service.py `
+  --provider agent-bridge:codex
+
+# Проект целиком, JSON-отчёт
+& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate project .\ `
+  --provider agent-bridge:antigravity --batch-size 10 --json --output report.json
+```
+
+Можно выбрать отдельные правила:
+
+```powershell
+& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file .\src\service.py `
+  --rules long_method,large_class,duplicate_code
+```
+
+Результат отдельной проверки имеет один из статусов: `passed`, `failed`, `skipped`, `inconclusive` или `error`. Для `failed` агент обязан вернуть файл, строки и доказательство; ссылки за пределами переданной цели отклоняются. Невалидный ответ один раз отправляется агенту на исправление.
+
+Текстовый итог выглядит так:
+
+```text
+Code Smells: 72/80 PASSED
+FAILED: 5 · SKIPPED: 2 · INCONCLUSIVE: 1 · ERRORS: 0
+Code quality: 87.3% · Assessment coverage: 96.2%
+```
+
+Python API:
+
+```python
+from agent_bridge.evaluation import EvaluationService, EvaluationTarget, load_code_smells_profile
+from agent_bridge.evaluation.providers import AgentBridgeProvider
+
+provider = AgentBridgeProvider("http://127.0.0.1:8765", "codex")
+report = await EvaluationService(provider).evaluate(
+    EvaluationTarget.project("D:/projects/example"),
+    load_code_smells_profile(),
+    batch_size=10,
+)
+print(report.to_json())
+```
+
+Codex-запросы evaluation запускаются с read-only sandbox. Текущий Antigravity CLI не предоставляет мосту эквивалентной гарантии, поэтому отчёт содержит предупреждение о режиме доступа.
 
 Если Antigravity CLI не обнаруживает `.agents/mcp_config.json`, зарегистрируйте stdio-сервер через `agy mcp add`. Для headless вызовов разрешите конкретные инструменты правилами вида `mcp(agent-bridge/ask_codex)` в `~/.gemini/antigravity-cli/settings.json`. Формат правил описан в [документации Antigravity](https://antigravity.google/docs/cli/permissions/).
 
@@ -169,6 +224,7 @@ $env:BRIDGE_AGY_MODE = 'sdk'
 
 ## Документация
 
+- [Проект LLM-first evaluation framework](docs/evaluation-framework-design.md)
 - [A2A Protocol](https://a2a-protocol.org/latest/)
 - [Antigravity CLI overview](https://antigravity.google/docs/cli/overview/)
 - [Antigravity headless mode](https://antigravity.google/docs/cli/headless/)

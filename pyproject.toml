@@ -36,3 +36,6 @@ agent-bridge-mcp = "agent_bridge.mcp_server:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["agent_bridge*"]
+
+[tool.setuptools.package-data]
+agent_bridge = ["evaluation/profiles/data/*.json"]
