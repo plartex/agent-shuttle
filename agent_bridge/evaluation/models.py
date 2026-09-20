@@ -187,6 +187,7 @@ class ProviderDescriptor:
     id: str
     agent: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
     read_only: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -194,6 +195,7 @@ class ProviderDescriptor:
             "id": self.id,
             "agent": self.agent,
             "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
             "read_only": self.read_only,
         }
 

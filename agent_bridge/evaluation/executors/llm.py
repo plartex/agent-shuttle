@@ -20,6 +20,7 @@ class LlmCheckExecutor:
             prompt,
             workspace=request.target.workspace,
             model=request.model,
+            reasoning_effort=request.reasoning_effort,
         )
         try:
             return validate_batch_response(
@@ -40,6 +41,7 @@ class LlmCheckExecutor:
                 repair,
                 workspace=request.target.workspace,
                 model=request.model,
+                reasoning_effort=request.reasoning_effort,
             )
             try:
                 return validate_batch_response(

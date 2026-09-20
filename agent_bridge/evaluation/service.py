@@ -22,6 +22,7 @@ class EvaluationService:
         profile: EvaluationProfile,
         *,
         model: str | None = None,
+        reasoning_effort: str | None = None,
         batch_size: int = 10,
     ) -> EvaluationReport:
         batches = plan_batches(profile.rules, batch_size=batch_size)
@@ -43,7 +44,13 @@ class EvaluationService:
             batch_id = f"batch-{number:04d}"
             try:
                 batch_results = await executor.execute(
-                    BatchRequest(batch_id=batch_id, target=target, rules=rules, model=model)
+                    BatchRequest(
+                        batch_id=batch_id,
+                        target=target,
+                        rules=rules,
+                        model=model,
+                        reasoning_effort=reasoning_effort,
+                    )
                 )
             except Exception as exc:
                 reason = f"{type(exc).__name__}: {exc}"
@@ -67,7 +74,7 @@ class EvaluationService:
             run_id=str(uuid.uuid4()),
             profile=profile,
             target=target,
-            provider=self.provider.descriptor(model),
+            provider=self.provider.descriptor(model, reasoning_effort),
             summary=summarize(ordered),
             results=ordered,
             warnings=tuple(warnings),

@@ -61,15 +61,15 @@ $env:BRIDGE_AGY_COMMAND = 'C:\path\to\agy.exe'
 
 | Tool | Назначение |
 |---|---|
-| `ask_antigravity(prompt, model?)` | Поставить задачу Antigravity |
-| `ask_codex(prompt, model?)` | Поставить задачу Codex |
+| `ask_antigravity(prompt, model?, reasoning_effort?)` | Поставить задачу Antigravity |
+| `ask_codex(prompt, model?, reasoning_effort?)` | Поставить задачу Codex |
 | `get_antigravity_info()` | Получить модели, effort и квоты Antigravity |
 | `get_codex_info()` | Получить модели, effort и квоты Codex |
 | `evaluate(target_type, target, ...)` | Проверить сниппет, файл или проект пакетами LLM-правил |
 
 ```text
-ask_antigravity(prompt="Проверь тесты", model="gemini-3.8-flash-medium")
-ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra")
+ask_antigravity(prompt="Проверь тесты", model="gemini-3.8-flash-medium", reasoning_effort="medium")
+ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra", reasoning_effort="high")
 ```
 
 ## Проверка качества кода
@@ -85,7 +85,7 @@ ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra")
 
 # Один файл
 & .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file .\src\service.py `
-  --provider agent-bridge:codex
+  --provider agent-bridge:codex --model gpt-5.6-terra --reasoning-effort high
 
 # Проект целиком, JSON-отчёт
 & .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate project .\ `
@@ -130,9 +130,17 @@ Codex-запросы evaluation запускаются с read-only sandbox. Т�
 
 ## Выбор модели
 
-Поле `model` проходит в `message.metadata["agent_bridge.model"]` запроса A2A. Сервер передаёт его в `agy --model` или `Codex.thread_start(model=...)`.
+Поля `model` и `reasoning_effort` проходят в metadata A2A как
+`agent_bridge.model` и `agent_bridge.reasoning_effort`. Сервер передаёт их в
+`agy --model/--effort` либо в `Codex.thread_start(model=..., config={"model_reasoning_effort": ...})`.
 
-Это соглашение данного моста поверх расширяемых metadata A2A. Если `model` не указан, каждый harness использует собственную текущую настройку. Упоминание модели только внутри `prompt` не переключает модель запуска.
+Это соглашение данного моста поверх расширяемых metadata A2A. Если параметры не указаны, каждый harness использует собственные текущие настройки. Упоминание модели или effort только внутри `prompt` не переключает настройки запуска.
+
+В актуальном каталоге Antigravity effort входит и в model ID (`...-low`,
+`...-medium`, `...-high`). При одновременной передаче `--model` и
+`--reasoning-effort` значения должны совпадать; `agy` отклоняет противоречивую
+пару. У Codex модель и reasoning effort задаются независимо в пределах
+совместимости, которую возвращает `get_codex_info`.
 
 Доступные ID следует получать из интерфейса возможностей или самого harness. Antigravity отклоняет неизвестный model ID. Каталог Codex содержит поддерживаемые reasoning efforts для каждой модели.
 
@@ -186,7 +194,8 @@ CLI:
 
 ```powershell
 & .\.venv\Scripts\python.exe -m agent_bridge.cli info http://127.0.0.1:8765
-& .\.venv\Scripts\python.exe -m agent_bridge.cli ask http://127.0.0.1:8766 'Проверь проект' --model gemini-3.8-flash-medium
+& .\.venv\Scripts\python.exe -m agent_bridge.cli ask http://127.0.0.1:8766 'Проверь проект' `
+  --model gemini-3.8-flash-medium --reasoning-effort medium
 ```
 
 ## Необязательный Antigravity SDK backend

@@ -18,17 +18,28 @@ mcp = FastMCP(
         "Use evaluate for batched code-smell checks of a snippet, file, or project. "
         "Use get_antigravity_info or get_codex_info to check current models, efforts and account quotas. "
         "Each call starts a new remote task. When the user names a model for the remote agent, "
-        "pass that model ID exactly in the optional model parameter. "
+        "pass that model ID exactly in the optional model parameter. When the user names a "
+        "reasoning effort, pass it exactly in reasoning_effort. "
         "Return the remote result to the user."
     ),
 )
 
 
-async def _ask(env_name: str, prompt: str, model: str | None = None) -> dict:
+async def _ask(
+    env_name: str,
+    prompt: str,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict:
     url = os.environ.get(env_name)
     if not url:
         raise RuntimeError(f"Set {env_name} to the local A2A server URL")
-    result = await BridgeClient().ask(url, prompt, model=model)
+    result = await BridgeClient().ask(
+        url,
+        prompt,
+        model=model,
+        reasoning_effort=reasoning_effort,
+    )
     return {
         "task_id": result.task_id,
         "context_id": result.context_id,
@@ -38,15 +49,23 @@ async def _ask(env_name: str, prompt: str, model: str | None = None) -> dict:
 
 
 @mcp.tool()
-async def ask_antigravity(prompt: str, model: str | None = None) -> dict:
-    """Delegate to Antigravity over A2A. model is an optional agy models slug."""
-    return await _ask("BRIDGE_ANTIGRAVITY_URL", prompt, model)
+async def ask_antigravity(
+    prompt: str,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict:
+    """Delegate to Antigravity. model and reasoning_effort map to agy launch flags."""
+    return await _ask("BRIDGE_ANTIGRAVITY_URL", prompt, model, reasoning_effort)
 
 
 @mcp.tool()
-async def ask_codex(prompt: str, model: str | None = None) -> dict:
-    """Delegate to Codex over A2A. model is an optional Codex model ID."""
-    return await _ask("BRIDGE_CODEX_URL", prompt, model)
+async def ask_codex(
+    prompt: str,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict:
+    """Delegate to Codex. model and reasoning_effort select its thread settings."""
+    return await _ask("BRIDGE_CODEX_URL", prompt, model, reasoning_effort)
 
 
 @mcp.tool()
@@ -75,6 +94,7 @@ async def evaluate(
     rules: list[str] | None = None,
     provider: str = "agent-bridge:codex",
     model: str | None = None,
+    reasoning_effort: str | None = None,
     batch_size: int = 10,
     language: str | None = None,
 ) -> dict:
@@ -95,6 +115,7 @@ async def evaluate(
         evaluation_target,
         evaluation_profile,
         model=model,
+        reasoning_effort=reasoning_effort,
         batch_size=batch_size,
     )
     return report.to_dict()

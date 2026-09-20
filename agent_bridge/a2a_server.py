@@ -46,6 +46,16 @@ class BridgeExecutor(AgentExecutor):
                 )
                 return
             model = model.strip()
+        reasoning_effort = None
+        if "agent_bridge.reasoning_effort" in context.message.metadata:
+            reasoning_effort = context.message.metadata["agent_bridge.reasoning_effort"]
+            if not isinstance(reasoning_effort, str) or not reasoning_effort.strip():
+                await updater.update_status(
+                    TaskState.TASK_STATE_REJECTED,
+                    new_text_message("agent_bridge.reasoning_effort must be a nonempty string"),
+                )
+                return
+            reasoning_effort = reasoning_effort.strip()
         read_only = False
         if "agent_bridge.read_only" in context.message.metadata:
             read_only = context.message.metadata["agent_bridge.read_only"]
@@ -57,7 +67,12 @@ class BridgeExecutor(AgentExecutor):
             return
         await updater.update_status(TaskState.TASK_STATE_WORKING)
         try:
-            answer = await self.backend.run(prompt, model, read_only=read_only)
+            answer = await self.backend.run(
+                prompt,
+                model,
+                reasoning_effort=reasoning_effort,
+                read_only=read_only,
+            )
         except Exception as exc:
             await updater.update_status(
                 TaskState.TASK_STATE_FAILED,
@@ -78,7 +93,8 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         name=f"Run {name} task",
         description=(
             f"Delegate a coding task to the local {name} agent and return its result. "
-            "Optional message metadata agent_bridge.model selects the backend model."
+            "Optional message metadata agent_bridge.model and agent_bridge.reasoning_effort "
+            "select the backend model and reasoning effort."
         ),
         input_modes=["text/plain"],
         output_modes=["text/plain"],
