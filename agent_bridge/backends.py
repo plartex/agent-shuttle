@@ -37,6 +37,7 @@ class Backend(Protocol):
         prompt: str,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> str: ...
 
@@ -50,6 +51,7 @@ class CodexBackend:
         prompt: str,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> str:
         from openai_codex import AsyncCodex, CodexConfig, Sandbox
@@ -61,6 +63,11 @@ class CodexBackend:
             thread = await codex.thread_start(
                 cwd=str(self.workspace),
                 model=model,
+                config=(
+                    {"model_reasoning_effort": reasoning_effort}
+                    if reasoning_effort is not None
+                    else None
+                ),
                 sandbox=Sandbox.read_only if read_only else Sandbox.workspace_write,
             )
             result = await thread.run(prompt)
@@ -79,11 +86,14 @@ class AntigravityCliBackend:
         prompt: str,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> str:
         command = [self.command, "-p", prompt, "--output-format", "json"]
         if model:
             command.extend(["--model", model])
+        if reasoning_effort:
+            command.extend(["--effort", reasoning_effort])
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=str(self.workspace),
@@ -123,6 +133,7 @@ class AntigravitySdkBackend:
         prompt: str,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> str:
         if not self.python.is_file():
@@ -137,6 +148,10 @@ class AntigravitySdkBackend:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        if reasoning_effort is not None:
+            raise RuntimeError(
+                "Antigravity SDK mode does not expose reasoning effort; use the default CLI mode"
+            )
         payload = json.dumps({"prompt": prompt, "workspace": str(self.workspace), "model": model}).encode()
         try:
             stdout, stderr = await process.communicate(payload)

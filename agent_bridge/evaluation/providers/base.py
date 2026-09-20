@@ -20,7 +20,11 @@ class ProviderCapabilities:
 class AgentProvider(Protocol):
     capabilities: ProviderCapabilities
 
-    def descriptor(self, model: str | None = None) -> ProviderDescriptor: ...
+    def descriptor(
+        self,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> ProviderDescriptor: ...
 
     async def run(
         self,
@@ -28,4 +32,5 @@ class AgentProvider(Protocol):
         *,
         workspace: Path | None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> str: ...

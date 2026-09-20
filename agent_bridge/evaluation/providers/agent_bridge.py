@@ -26,11 +26,16 @@ class AgentBridgeProvider:
             structured_output=False,
         )
 
-    def descriptor(self, model: str | None = None) -> ProviderDescriptor:
+    def descriptor(
+        self,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> ProviderDescriptor:
         return ProviderDescriptor(
             id="agent_bridge",
             agent=self.agent,
             model=model,
+            reasoning_effort=reasoning_effort,
             read_only=self.capabilities.read_only,
         )
 
@@ -40,6 +45,7 @@ class AgentBridgeProvider:
         *,
         workspace: Path | None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> str:
         # The current bridge server owns its workspace. The absolute target path in
         # the prompt scopes the evaluation; workspace is retained for future
@@ -48,6 +54,7 @@ class AgentBridgeProvider:
             self.peer_url,
             prompt,
             model=model,
+            reasoning_effort=reasoning_effort,
             read_only=self.capabilities.read_only,
         )
         if result.state not in {"TASK_STATE_COMPLETED", "message"}:

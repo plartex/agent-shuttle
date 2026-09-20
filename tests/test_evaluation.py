@@ -52,6 +52,32 @@ class CatalogAndBatchingTest(unittest.TestCase):
 
 
 class EvaluationServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_model_and_reasoning_effort_reach_provider_and_report(self):
+        profile = load_code_smells_profile(rule_ids=["long_method"])
+
+        def handler(prompt, workspace, model):
+            return response_for(
+                prompt,
+                lambda rule: {
+                    "rule_id": rule["id"],
+                    "status": "passed",
+                    "confidence": 1.0,
+                    "evidence": [],
+                },
+            )
+
+        provider = FakeAgentProvider(handler)
+        report = await EvaluationService(provider).evaluate(
+            EvaluationTarget.snippet("def small(): return 1", language="python"),
+            profile,
+            model="chosen-model",
+            reasoning_effort="high",
+        )
+
+        self.assertEqual(provider.calls[0][2:], ("chosen-model", "high"))
+        self.assertEqual(report.provider.model, "chosen-model")
+        self.assertEqual(report.provider.reasoning_effort, "high")
+
     async def test_failed_and_passed_rules_produce_weighted_score(self):
         profile = load_code_smells_profile(rule_ids=["long_method", "large_class"])
 

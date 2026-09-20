@@ -369,7 +369,7 @@ assessment_coverage =
   "run_id": "...",
   "profile": {"id": "code_smells", "version": "1.0"},
   "target": {"kind": "project", "path": "D:/projects/example"},
-  "provider": {"id": "agent_bridge", "agent": "codex", "model": null},
+  "provider": {"id": "agent_bridge", "agent": "codex", "model": null, "reasoning_effort": null},
   "summary": {
     "total": 80,
     "passed": 72,
@@ -416,6 +416,7 @@ agent-bridge evaluate project .\ --provider agent-bridge:antigravity --json
 - `--batch-size 10`;
 - `--provider ...`;
 - `--model ...`;
+- `--reasoning-effort ...`;
 - `--json`;
 - `--output report.json`.
 

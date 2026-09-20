@@ -14,6 +14,7 @@ class BatchRequest:
     target: EvaluationTarget
     rules: tuple[RuleDefinition, ...]
     model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class CheckExecutor(Protocol):

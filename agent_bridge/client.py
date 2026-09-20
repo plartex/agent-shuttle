@@ -46,12 +46,17 @@ class BridgeClient:
         prompt: str,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> BridgeResult:
         if not prompt.strip():
             raise ValueError("prompt must contain text")
         if model is not None and (not isinstance(model, str) or not model.strip()):
             raise ValueError("model must be a nonempty string when provided")
+        if reasoning_effort is not None and (
+            not isinstance(reasoning_effort, str) or not reasoning_effort.strip()
+        ):
+            raise ValueError("reasoning_effort must be a nonempty string when provided")
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
             client = await create_client(
                 peer_url.rstrip("/"),
@@ -62,6 +67,8 @@ class BridgeClient:
                 message = new_text_message(prompt, role=Role.ROLE_USER)
                 if model is not None:
                     message.metadata["agent_bridge.model"] = model.strip()
+                if reasoning_effort is not None:
+                    message.metadata["agent_bridge.reasoning_effort"] = reasoning_effort.strip()
                 if read_only:
                     message.metadata["agent_bridge.read_only"] = True
                 request = SendMessageRequest(message=message)

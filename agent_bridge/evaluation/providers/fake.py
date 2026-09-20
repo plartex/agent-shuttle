@@ -23,10 +23,20 @@ class FakeAgentProvider:
 
     def __init__(self, handler: FakeHandler):
         self.handler = handler
-        self.calls: list[tuple[str, Path | None, str | None]] = []
+        self.calls: list[tuple[str, Path | None, str | None, str | None]] = []
 
-    def descriptor(self, model: str | None = None) -> ProviderDescriptor:
-        return ProviderDescriptor(id="fake", agent="fake", model=model, read_only=True)
+    def descriptor(
+        self,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> ProviderDescriptor:
+        return ProviderDescriptor(
+            id="fake",
+            agent="fake",
+            model=model,
+            reasoning_effort=reasoning_effort,
+            read_only=True,
+        )
 
     async def run(
         self,
@@ -34,8 +44,9 @@ class FakeAgentProvider:
         *,
         workspace: Path | None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> str:
-        self.calls.append((prompt, workspace, model))
+        self.calls.append((prompt, workspace, model, reasoning_effort))
         result = self.handler(prompt, workspace, model)
         if inspect.isawaitable(result):
             return await result
