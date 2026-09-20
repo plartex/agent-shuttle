@@ -1,0 +1,15 @@
+/.venv/
+/.venv-agy/
+/.runtime/
+/bin/
+/.agents/mcp_config.json
+/.codex/config.toml
+/.pytest_cache/
+/.ruff_cache/
+/.coverage
+**/__pycache__/
+*.egg-info/
+*.py[cod]
+.env
+.env.*
+!.env.example
