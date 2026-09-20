@@ -25,7 +25,14 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
                 for tool in tools:
                     if tool.name.startswith("ask_"):
                         self.assertIn("model", tool.inputSchema["properties"])
-        self.assertEqual(names, {"ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info"})
+        self.assertEqual(
+            names,
+            {"ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info", "evaluate"},
+        )
+        evaluate = next(tool for tool in tools if tool.name == "evaluate")
+        self.assertIn("target_type", evaluate.inputSchema["properties"])
+        self.assertIn("target", evaluate.inputSchema["properties"])
+        self.assertIn("batch_size", evaluate.inputSchema["properties"])
 
 
 if __name__ == "__main__":

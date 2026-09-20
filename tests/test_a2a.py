@@ -10,8 +10,8 @@ from agent_bridge.client import BridgeClient
 
 
 class EchoBackend:
-    async def run(self, prompt: str, model: str | None = None) -> str:
-        return f"echo: {prompt}; model: {model or 'default'}"
+    async def run(self, prompt: str, model: str | None = None, *, read_only: bool = False) -> str:
+        return f"echo: {prompt}; model: {model or 'default'}; read_only: {read_only}"
 
 
 class EchoInfo:
@@ -49,10 +49,12 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(card["name"], "Codex local agent")
             result = await BridgeClient().ask(url, "привет")
             self.assertEqual(result.state, "TASK_STATE_COMPLETED")
-            self.assertEqual(result.text, "echo: привет; model: default")
+            self.assertEqual(result.text, "echo: привет; model: default; read_only: False")
             self.assertTrue(result.task_id)
             selected = await BridgeClient().ask(url, "привет", model="chosen-model")
-            self.assertEqual(selected.text, "echo: привет; model: chosen-model")
+            self.assertEqual(selected.text, "echo: привет; model: chosen-model; read_only: False")
+            read_only = await BridgeClient().ask(url, "проверка", read_only=True)
+            self.assertEqual(read_only.text, "echo: проверка; model: default; read_only: True")
             info = await BridgeClient().info(url)
             self.assertEqual(info["capabilities"]["selected_model"], "test-model")
             self.assertTrue(info["usage"]["available"])

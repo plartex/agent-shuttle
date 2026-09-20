@@ -46,9 +46,18 @@ class BridgeExecutor(AgentExecutor):
                 )
                 return
             model = model.strip()
+        read_only = False
+        if "agent_bridge.read_only" in context.message.metadata:
+            read_only = context.message.metadata["agent_bridge.read_only"]
+        if not isinstance(read_only, bool):
+            await updater.update_status(
+                TaskState.TASK_STATE_REJECTED,
+                new_text_message("agent_bridge.read_only must be a boolean"),
+            )
+            return
         await updater.update_status(TaskState.TASK_STATE_WORKING)
         try:
-            answer = await self.backend.run(prompt, model)
+            answer = await self.backend.run(prompt, model, read_only=read_only)
         except Exception as exc:
             await updater.update_status(
                 TaskState.TASK_STATE_FAILED,
