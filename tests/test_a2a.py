@@ -11,6 +11,9 @@ from agent_bridge.client import BridgeClient
 
 
 class EchoBackend:
+    def __init__(self):
+        self.sessions = []
+
     async def run(
         self,
         prompt: str,
@@ -24,6 +27,28 @@ class EchoBackend:
             f"effort: {reasoning_effort or 'default'}; read_only: {read_only}"
         )
         return BackendResponse(text, {"input_tokens": 123, "output_tokens": 7, "total_tokens": 130})
+
+    async def open_session(self, model=None, *, reasoning_effort=None, read_only=False):
+        session = EchoSession(model, reasoning_effort, read_only)
+        self.sessions.append(session)
+        return session
+
+
+class EchoSession:
+    def __init__(self, model, effort, read_only):
+        self.settings = (model, effort, read_only)
+        self.turns = 0
+        self.closed = False
+
+    async def ask(self, prompt):
+        self.turns += 1
+        return BackendResponse(
+            f"turn {self.turns}: {prompt}",
+            {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+        )
+
+    async def close(self):
+        self.closed = True
 
 
 class EchoInfo:
@@ -42,7 +67,8 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
-        app = make_app("codex", EchoBackend(), url, EchoInfo())
+        backend = EchoBackend()
+        app = make_app("codex", backend, url, EchoInfo())
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
         running = asyncio.create_task(server.serve())
         try:
@@ -92,6 +118,23 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(info["usage"]["available"])
             self.assertNotIn("usage", await BridgeClient().capabilities(url))
             self.assertNotIn("capabilities", await BridgeClient().usage(url))
+            async with BridgeClient().session(
+                url, model="chosen-model", reasoning_effort="high", read_only=True,
+            ) as session:
+                first = await session.ask("first")
+                second = await session.ask("second")
+                self.assertEqual(first.text, "turn 1: first")
+                self.assertEqual(second.text, "turn 2: second")
+                self.assertEqual(first.context_id, session.id)
+                self.assertEqual(second.context_id, session.id)
+                self.assertEqual(len(backend.sessions), 1)
+                self.assertEqual(
+                    backend.sessions[0].settings, ("chosen-model", "high", True)
+                )
+                self.assertEqual(second.usage["input_tokens"], 10)
+            self.assertTrue(backend.sessions[0].closed)
+            with self.assertRaisesRegex(RuntimeError, "closed"):
+                await session.ask("too late")
         finally:
             server.should_exit = True
             await running

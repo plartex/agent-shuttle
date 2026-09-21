@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from time import monotonic
+
 from a2a.helpers import get_message_text, new_task_from_user_message, new_text_message, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -14,13 +20,92 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .backends import Backend, BackendResponse
+from .backends import Backend, BackendResponse, BackendSession
 from .info import InfoProvider
 
 
-class BridgeExecutor(AgentExecutor):
-    def __init__(self, backend: Backend):
+@dataclass
+class _SessionRecord:
+    backend: BackendSession
+    settings: tuple[str | None, str | None, bool]
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    last_used: float = field(default_factory=monotonic)
+    closed: bool = False
+
+
+class SessionManager:
+    """Own backend conversations; one active turn at a time per session."""
+
+    def __init__(self, backend: Backend, idle_seconds: float = 1800):
         self.backend = backend
+        self.idle_seconds = idle_seconds
+        self.sessions: dict[str, _SessionRecord] = {}
+        self.lock = asyncio.Lock()
+
+    async def run(
+        self,
+        session_id: str,
+        prompt: str,
+        model: str | None,
+        reasoning_effort: str | None,
+        read_only: bool,
+    ) -> str | BackendResponse:
+        settings = (model, reasoning_effort, read_only)
+        async with self.lock:
+            record = self.sessions.get(session_id)
+            if record is None:
+                session = await self.backend.open_session(
+                    model, reasoning_effort=reasoning_effort, read_only=read_only
+                )
+                record = _SessionRecord(session, settings)
+                self.sessions[session_id] = record
+            elif record.settings != settings:
+                raise ValueError("Model, reasoning effort, and read_only cannot change within a session")
+            record.last_used = monotonic()
+        async with record.lock:
+            if record.closed:
+                raise RuntimeError("Session was closed during a concurrent request")
+            record.last_used = monotonic()
+            try:
+                return await record.backend.ask(prompt)
+            finally:
+                record.last_used = monotonic()
+
+    async def close(self, session_id: str) -> bool:
+        async with self.lock:
+            record = self.sessions.pop(session_id, None)
+        if record is None:
+            return False
+        async with record.lock:
+            record.closed = True
+            await record.backend.close()
+        return True
+
+    async def reap_idle(self) -> None:
+        cutoff = monotonic() - self.idle_seconds
+        async with self.lock:
+            expired = [
+                (session_id, record) for session_id, record in self.sessions.items()
+                if record.last_used < cutoff and not record.lock.locked()
+            ]
+            for session_id, _ in expired:
+                self.sessions.pop(session_id)
+        for _, record in expired:
+            async with record.lock:
+                record.closed = True
+                await record.backend.close()
+
+    async def close_all(self) -> None:
+        async with self.lock:
+            session_ids = list(self.sessions)
+        for session_id in session_ids:
+            await self.close(session_id)
+
+
+class BridgeExecutor(AgentExecutor):
+    def __init__(self, backend: Backend, sessions: SessionManager):
+        self.backend = backend
+        self.sessions = sessions
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         if context.current_task:
@@ -65,14 +150,35 @@ class BridgeExecutor(AgentExecutor):
                 new_text_message("agent_bridge.read_only must be a boolean"),
             )
             return
+        session_id = (
+            context.message.metadata["agent_bridge.session_id"]
+            if "agent_bridge.session_id" in context.message.metadata else None
+        )
+        if session_id is not None:
+            try:
+                session_id = str(uuid.UUID(session_id))
+            except (TypeError, ValueError, AttributeError):
+                await updater.update_status(
+                    TaskState.TASK_STATE_REJECTED,
+                    new_text_message("agent_bridge.session_id must be a UUID"),
+                )
+                return
+            if context.message.context_id != session_id:
+                await updater.update_status(
+                    TaskState.TASK_STATE_REJECTED,
+                    new_text_message("session_id must match the A2A context_id"),
+                )
+                return
         await updater.update_status(TaskState.TASK_STATE_WORKING)
         try:
-            answer = await self.backend.run(
-                prompt,
-                model,
-                reasoning_effort=reasoning_effort,
-                read_only=read_only,
-            )
+            if session_id is None:
+                answer = await self.backend.run(
+                    prompt, model, reasoning_effort=reasoning_effort, read_only=read_only,
+                )
+            else:
+                answer = await self.sessions.run(
+                    session_id, prompt, model, reasoning_effort, read_only,
+                )
         except Exception as exc:
             await updater.update_status(
                 TaskState.TASK_STATE_FAILED,
@@ -96,6 +202,7 @@ class BridgeExecutor(AgentExecutor):
 
 
 def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider | None = None) -> Starlette:
+    sessions = SessionManager(backend)
     skill = AgentSkill(
         id=f"run_{name}",
         name=f"Run {name} task",
@@ -122,7 +229,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         skills=[skill],
     )
     handler = DefaultRequestHandler(
-        agent_executor=BridgeExecutor(backend),
+        agent_executor=BridgeExecutor(backend, sessions),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
@@ -138,11 +245,38 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=503)
         return JSONResponse(result)
 
+    async def close_session(request):
+        try:
+            session_id = str(uuid.UUID(request.path_params["session_id"]))
+        except ValueError:
+            return JSONResponse({"error": "session_id must be a UUID"}, status_code=400)
+        return JSONResponse({"closed": await sessions.close(session_id)})
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async def reap_loop():
+            while True:
+                await asyncio.sleep(60)
+                await sessions.reap_idle()
+
+        janitor = asyncio.create_task(reap_loop())
+        try:
+            yield
+        finally:
+            janitor.cancel()
+            try:
+                await janitor
+            except asyncio.CancelledError:
+                pass
+            await sessions.close_all()
+
     return Starlette(
+        lifespan=lifespan,
         routes=[
             Route("/bridge/info", bridge_info),
             Route("/bridge/capabilities", bridge_info),
             Route("/bridge/usage", bridge_info),
+            Route("/bridge/sessions/{session_id}", close_session, methods=["DELETE"]),
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(handler, "/"),
         ]

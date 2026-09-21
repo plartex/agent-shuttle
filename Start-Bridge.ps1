@@ -34,7 +34,11 @@ foreach ($agent in @(@{ Name = 'codex'; Port = 8765 }, @{ Name = 'antigravity'; 
     $pidFile = Join-Path $runtime "$($agent.Name).pid"
     if (Test-Path -LiteralPath $pidFile) {
         $existingPid = [int](Get-Content -LiteralPath $pidFile -Raw)
-        if (Get-Process -Id $existingPid -ErrorAction SilentlyContinue) {
+        $existingProcess = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
+        if ($existingProcess -and $existingProcess.Path -ne $python) {
+            throw "PID $existingPid in $pidFile is not Agent Bridge Python: $($existingProcess.Path)"
+        }
+        if ($existingProcess) {
             Write-Output "$($agent.Name) already running (PID $existingPid)"
             continue
         }
