@@ -15,7 +15,13 @@ def summarize(results: tuple[CheckResult, ...]) -> EvaluationSummary:
     passed_weight = sum(SEVERITY_WEIGHTS[result.severity] for result in results if result.status == "passed")
     failed_weight = sum(SEVERITY_WEIGHTS[result.severity] for result in results if result.status == "failed")
     assessed_weight = passed_weight + failed_weight
-    quality = 100.0 * passed_weight / assessed_weight if assessed_weight else None
+    # A score based on only successful batches looks authoritative even when
+    # transport/tool failures left part of the profile unassessed.
+    quality = (
+        100.0 * passed_weight / assessed_weight
+        if assessed_weight and not counts["error"]
+        else None
+    )
     assessed_count = counts["passed"] + counts["failed"]
     coverage = 100.0 * assessed_count / len(results) if results else 0.0
     return EvaluationSummary(
