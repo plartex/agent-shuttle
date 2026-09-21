@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -31,6 +32,20 @@ def _decode_agy_result(stdout: bytes, stderr: bytes) -> str:
     return response
 
 
+def _decode_agy_usage(stdout: bytes) -> dict[str, int]:
+    raw_usage = json.loads(stdout).get("usage") or {}
+    if not isinstance(raw_usage, dict):
+        return {}
+    return {
+        key: value
+        for key, value in raw_usage.items()
+        if key in {"input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens", "total_tokens"}
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= 0
+    }
+
+
 class Backend(Protocol):
     async def run(
         self,
@@ -39,7 +54,13 @@ class Backend(Protocol):
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
-    ) -> str: ...
+    ) -> str | "BackendResponse": ...
+
+
+@dataclass(frozen=True)
+class BackendResponse:
+    text: str
+    usage: dict[str, int]
 
 
 class CodexBackend:
@@ -88,7 +109,7 @@ class AntigravityCliBackend:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
-    ) -> str:
+    ) -> BackendResponse:
         command = [self.command, "-p", prompt, "--output-format", "json"]
         if model:
             command.extend(["--model", model])
@@ -111,7 +132,8 @@ class AntigravityCliBackend:
             raise RuntimeError(
                 f"agy failed ({process.returncode}): {stderr.decode(errors='replace')[-4000:]}"
             )
-        return _decode_agy_result(stdout, stderr)
+        response = _decode_agy_result(stdout, stderr)
+        return BackendResponse(response, _decode_agy_usage(stdout))
 
 
 def default_agy_python() -> Path:

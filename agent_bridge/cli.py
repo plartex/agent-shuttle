@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 import uvicorn
@@ -48,6 +49,10 @@ def main() -> None:
     evaluate.add_argument("--reasoning-effort")
     evaluate.add_argument("--catalog", type=Path, help="Override the bundled code-smells catalog")
     evaluate.add_argument("--json", action="store_true", dest="json_output")
+    evaluate.add_argument(
+        "--debug", action="store_true",
+        help="Print batch-by-batch JSON trace to stderr and include it in the report",
+    )
     evaluate.add_argument("--output", type=Path, help="Write the selected report format to a file")
     args = parser.parse_args()
     if args.command == "ask":
@@ -93,6 +98,14 @@ def main() -> None:
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
                 batch_size=args.batch_size,
+                debug=args.debug,
+                on_debug_event=(
+                    lambda event: print(
+                        "[debug] " + json.dumps(event, ensure_ascii=False),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                ) if args.debug else None,
             )
         )
         rendered = report.to_json() if args.json_output else format_text_report(report)

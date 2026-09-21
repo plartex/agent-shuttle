@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import httpx
+from google.protobuf.json_format import MessageToDict
 
 from a2a.client import ClientConfig, create_client
 from a2a.helpers import new_text_message
@@ -18,6 +19,7 @@ class BridgeResult:
     context_id: str | None
     state: str
     text: str
+    usage: dict[str, int] | None = None
 
 
 class BridgeClient:
@@ -85,9 +87,21 @@ class BridgeClient:
                 task = last.task
                 state = TaskState.Name(task.status.state)
                 text = "\n".join(_parts(artifact.parts) for artifact in task.artifacts).strip()
+                usage = None
+                for artifact in task.artifacts:
+                    if artifact.HasField("metadata"):
+                        candidate = MessageToDict(artifact.metadata).get("agent_bridge.usage")
+                        if isinstance(candidate, dict):
+                            usage = {
+                                key: int(value) for key, value in candidate.items()
+                                if isinstance(value, (int, float))
+                                and not isinstance(value, bool)
+                                and value >= 0
+                                and float(value).is_integer()
+                            }
                 if not text and task.status.HasField("message"):
                     text = _parts(task.status.message.parts)
-                return BridgeResult(peer_url, task.id, task.context_id, state, text)
+                return BridgeResult(peer_url, task.id, task.context_id, state, text, usage)
             finally:
                 await client.close()
 

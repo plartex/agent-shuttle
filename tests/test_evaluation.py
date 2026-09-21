@@ -12,6 +12,8 @@ from agent_bridge.evaluation import (
 from agent_bridge.evaluation.batching import plan_batches
 from agent_bridge.evaluation.prompting import MAX_INLINE_FILE_BYTES, build_evaluation_prompt
 from agent_bridge.evaluation.providers import FakeAgentProvider
+from agent_bridge.evaluation.providers.agent_bridge import AgentBridgeProvider
+from agent_bridge.evaluation.providers.base import ProviderResponse
 from agent_bridge.evaluation.models import CheckResult
 from agent_bridge.evaluation.scoring import summarize
 
@@ -97,6 +99,41 @@ class CatalogAndBatchingTest(unittest.TestCase):
 
 
 class EvaluationServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_project_target_rejected_before_model_call_for_fixed_workspace_bridge(self):
+        with tempfile.TemporaryDirectory() as folder:
+            provider = AgentBridgeProvider("http://127.0.0.1:1", "antigravity")
+            with self.assertRaisesRegex(ValueError, "No model calls were made"):
+                await EvaluationService(provider).evaluate(
+                    EvaluationTarget.project(folder),
+                    load_code_smells_profile(rule_ids=["long_method"]),
+                )
+
+    async def test_debug_trace_includes_batch_progress_and_actual_usage(self):
+        profile = load_code_smells_profile(rule_ids=["long_method"])
+        emitted = []
+
+        def handler(prompt, workspace, model):
+            return ProviderResponse(
+                response_for(prompt, lambda rule: {
+                    "rule_id": rule["id"], "status": "passed", "confidence": 1.0, "evidence": [],
+                }),
+                {"input_tokens": 1234, "output_tokens": 56, "total_tokens": 1290},
+            )
+
+        report = await EvaluationService(FakeAgentProvider(handler)).evaluate(
+            EvaluationTarget.snippet("def small(): return 1"),
+            profile,
+            debug=True,
+            on_debug_event=emitted.append,
+        )
+        events = [entry["event"] for entry in emitted]
+        self.assertEqual(events, [
+            "run_started", "batch_started", "agent_request", "agent_response",
+            "validated", "batch_finished", "run_finished",
+        ])
+        self.assertEqual(emitted[-1]["usage_totals"]["input_tokens"], 1234)
+        self.assertEqual(report.to_dict()["debug_trace"], emitted)
+
     async def test_model_and_reasoning_effort_reach_provider_and_report(self):
         profile = load_code_smells_profile(rule_ids=["long_method"])
 

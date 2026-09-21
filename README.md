@@ -65,7 +65,7 @@ $env:BRIDGE_AGY_COMMAND = 'C:\path\to\agy.exe'
 | `ask_codex(prompt, model?, reasoning_effort?)` | Поставить задачу Codex |
 | `get_antigravity_info()` | Получить модели, effort и квоты Antigravity |
 | `get_codex_info()` | Получить модели, effort и квоты Codex |
-| `evaluate(target_type, target, ...)` | Проверить сниппет, файл или проект пакетами LLM-правил |
+| `evaluate(target_type, target, ...)` | Проверить сниппет или файл пакетами LLM-правил; проектный режим пока закрыт |
 
 ```text
 ask_antigravity(prompt="Проверь тесты", model="gemini-3.8-flash-medium", reasoning_effort="medium")
@@ -78,8 +78,8 @@ ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra", reasoning_e
 
 Для цели `file` содержимое файла (до 1 МБ) передаётся агенту прямо в запросе.
 Поэтому одиночный файл можно проверять за пределами workspace запущенного агента без
-дополнительных разрешений на файловую систему. Цель `project` пока требует, чтобы
-каталог был доступен workspace агента.
+дополнительных разрешений на файловую систему. Цель `project` пока отклоняется
+до обращения к модели: передача содержимого проекта ещё не реализована.
 
 Цель всегда задаётся явно:
 
@@ -92,9 +92,6 @@ ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra", reasoning_e
 & .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file .\src\service.py `
   --provider agent-bridge:codex --model gpt-5.6-terra --reasoning-effort high
 
-# Проект целиком, JSON-отчёт
-& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate project .\ `
-  --provider agent-bridge:antigravity --batch-size 10 --json --output report.json
 ```
 
 Можно выбрать отдельные правила:
@@ -105,6 +102,29 @@ ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra", reasoning_e
 ```
 
 Результат отдельной проверки имеет один из статусов: `passed`, `failed`, `skipped`, `inconclusive` или `error`. Для `failed` агент обязан вернуть файл, строки и доказательство; ссылки за пределами переданной цели отклоняются. Невалидный ответ один раз отправляется агенту на исправление.
+
+Для подробного хода проверки добавьте `--debug`:
+
+```powershell
+& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file 'D:\VM\common\backend-mono\services\backend\app\adauth\rls.py' `
+  --provider agent-bridge:antigravity --model gemini-3.8-flash-medium `
+  --reasoning-effort medium --json --debug --output rls.debug.json
+```
+
+Поток `[debug]` идёт в stderr сразу по ходу работы: начало пакета и список правил,
+размер запроса, ответ и `usage` провайдера, проверка JSON, возможная повторная
+попытка, время и статусы. JSON-файл дополнительно содержит `debug_trace`.
+Исходный код и полные промпты в трассу не записываются. В `run_finished` поле
+`usage_totals` суммирует только предоставленные провайдером счётчики;
+`usage_reported_calls` показывает, для скольких `agent_requests` они доступны.
+Antigravity CLI выдаёт токены; Codex backend пока не передаёт per-run usage.
+
+При `file` содержимое повторяется в каждом пакете. Число пакетов определяется
+также областью применения правил: 80 правил при `--batch-size 10` образуют
+13 пакетов. Для `project` текущий Bridge не передаёт содержимое проекта в
+запрос и имеет фиксированный workspace. Такой запрос отклоняется до вызова
+модели, чтобы не тратить квоту на фиктивную проверку. Полноценное сканирование
+произвольного проекта и прогноз расхода для него пока не реализованы.
 
 Если хотя бы один пакет завершился с `error`, итоговый `quality_score` равен `null`:
 оценка по частичному набору правил не выдаётся за качество всего запуска.
@@ -125,7 +145,7 @@ from agent_bridge.evaluation.providers import AgentBridgeProvider
 
 provider = AgentBridgeProvider("http://127.0.0.1:8765", "codex")
 report = await EvaluationService(provider).evaluate(
-    EvaluationTarget.project("D:/projects/example"),
+    EvaluationTarget.file("D:/projects/example/service.py"),
     load_code_smells_profile(),
     batch_size=10,
 )

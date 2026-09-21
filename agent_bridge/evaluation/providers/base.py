@@ -17,6 +17,12 @@ class ProviderCapabilities:
     structured_output: bool = False
 
 
+@dataclass(frozen=True)
+class ProviderResponse:
+    text: str
+    usage: dict[str, int] | None = None
+
+
 class AgentProvider(Protocol):
     capabilities: ProviderCapabilities
 
@@ -33,4 +39,4 @@ class AgentProvider(Protocol):
         workspace: Path | None,
         model: str | None = None,
         reasoning_effort: str | None = None,
-    ) -> str: ...
+    ) -> str | ProviderResponse: ...

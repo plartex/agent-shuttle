@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Callable, Protocol
 
 from ..models import CheckResult, EvaluationTarget, RuleDefinition
 
@@ -15,6 +15,7 @@ class BatchRequest:
     rules: tuple[RuleDefinition, ...]
     model: str | None = None
     reasoning_effort: str | None = None
+    emit: Callable[[str, dict[str, Any]], None] | None = None
 
 
 class CheckExecutor(Protocol):
