@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from agent_bridge.backends import _decode_agy_result
+from agent_bridge.backends import _decode_agy_result, _decode_agy_usage
 
 
 class AntigravityCliBackendTests(unittest.TestCase):
@@ -22,6 +22,16 @@ class AntigravityCliBackendTests(unittest.TestCase):
     def test_rejects_invalid_json_with_stderr_context(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "invalid JSON.*backend unavailable"):
             _decode_agy_result(b"not-json", b"backend unavailable")
+
+    def test_extracts_only_nonnegative_token_counters(self) -> None:
+        payload = {"usage": {
+            "input_tokens": 123, "output_tokens": 7, "total_tokens": 130,
+            "thinking_tokens": -1, "cache_read_tokens": True, "other": 99,
+        }}
+        self.assertEqual(
+            _decode_agy_usage(json.dumps(payload).encode()),
+            {"input_tokens": 123, "output_tokens": 7, "total_tokens": 130},
+        )
 
 
 if __name__ == "__main__":

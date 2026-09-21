@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from ..models import ProviderDescriptor
-from .base import ProviderCapabilities
+from .base import ProviderCapabilities, ProviderResponse
 
 
-FakeHandler = Callable[[str, Path | None, str | None], str | Awaitable[str]]
+FakeHandler = Callable[
+    [str, Path | None, str | None],
+    str | ProviderResponse | Awaitable[str | ProviderResponse],
+]
 
 
 class FakeAgentProvider:
@@ -45,7 +48,7 @@ class FakeAgentProvider:
         workspace: Path | None,
         model: str | None = None,
         reasoning_effort: str | None = None,
-    ) -> str:
+    ) -> str | ProviderResponse:
         self.calls.append((prompt, workspace, model, reasoning_effort))
         result = self.handler(prompt, workspace, model)
         if inspect.isawaitable(result):

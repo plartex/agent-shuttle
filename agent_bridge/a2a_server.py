@@ -14,7 +14,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .backends import Backend
+from .backends import Backend, BackendResponse
 from .info import InfoProvider
 
 
@@ -79,7 +79,15 @@ class BridgeExecutor(AgentExecutor):
                 new_text_message(f"{type(exc).__name__}: {exc}"),
             )
             return
-        await updater.add_artifact([new_text_part(answer, media_type="text/plain")], name="result")
+        metadata = None
+        if isinstance(answer, BackendResponse):
+            metadata = {"agent_bridge.usage": answer.usage} if answer.usage else None
+            answer = answer.text
+        await updater.add_artifact(
+            [new_text_part(answer, media_type="text/plain")],
+            name="result",
+            metadata=metadata,
+        )
         await updater.update_status(TaskState.TASK_STATE_COMPLETED)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

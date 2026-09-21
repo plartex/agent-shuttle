@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ...client import BridgeClient
 from ..models import ProviderDescriptor
-from .base import ProviderCapabilities
+from .base import ProviderCapabilities, ProviderResponse
 
 
 class AgentBridgeProvider:
@@ -46,7 +46,7 @@ class AgentBridgeProvider:
         workspace: Path | None,
         model: str | None = None,
         reasoning_effort: str | None = None,
-    ) -> str:
+    ) -> ProviderResponse:
         # The current bridge server owns its workspace. The absolute target path in
         # the prompt scopes the evaluation; workspace is retained for future
         # dynamic-workspace support.
@@ -59,7 +59,7 @@ class AgentBridgeProvider:
         )
         if result.state not in {"TASK_STATE_COMPLETED", "message"}:
             raise RuntimeError(f"Agent Bridge task ended in {result.state}: {result.text}")
-        return result.text
+        return ProviderResponse(result.text, result.usage)
 
 
 def agent_bridge_provider_from_name(name: str) -> AgentBridgeProvider:

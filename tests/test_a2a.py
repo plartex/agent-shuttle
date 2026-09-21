@@ -6,6 +6,7 @@ import httpx
 import uvicorn
 
 from agent_bridge.a2a_server import make_app
+from agent_bridge.backends import BackendResponse
 from agent_bridge.client import BridgeClient
 
 
@@ -18,10 +19,11 @@ class EchoBackend:
         reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> str:
-        return (
+        text = (
             f"echo: {prompt}; model: {model or 'default'}; "
             f"effort: {reasoning_effort or 'default'}; read_only: {read_only}"
         )
+        return BackendResponse(text, {"input_tokens": 123, "output_tokens": 7, "total_tokens": 130})
 
 
 class EchoInfo:
@@ -64,6 +66,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 "echo: привет; model: default; effort: default; read_only: False",
             )
             self.assertTrue(result.task_id)
+            self.assertEqual(result.usage, {"input_tokens": 123, "output_tokens": 7, "total_tokens": 130})
             selected = await BridgeClient().ask(url, "привет", model="chosen-model")
             self.assertEqual(
                 selected.text,

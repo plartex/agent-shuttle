@@ -209,10 +209,11 @@ class EvaluationReport:
     summary: EvaluationSummary
     results: tuple[CheckResult, ...]
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    debug_trace: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     schema_version: str = "1.0"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "profile": self.profile.to_dict(),
@@ -222,6 +223,9 @@ class EvaluationReport:
             "warnings": list(self.warnings),
             "results": [item.to_dict() for item in self.results],
         }
+        if self.debug_trace:
+            result["debug_trace"] = list(self.debug_trace)
+        return result
 
     def to_json(self, *, indent: int | None = 2) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
