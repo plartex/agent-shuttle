@@ -10,7 +10,10 @@ from agent_bridge.evaluation import (
     load_code_smells_profile,
 )
 from agent_bridge.evaluation.batching import plan_batches
+from agent_bridge.evaluation.prompting import MAX_INLINE_FILE_BYTES, build_evaluation_prompt
 from agent_bridge.evaluation.providers import FakeAgentProvider
+from agent_bridge.evaluation.models import CheckResult
+from agent_bridge.evaluation.scoring import summarize
 
 
 def request_from_prompt(prompt: str) -> dict:
@@ -31,6 +34,14 @@ def response_for(prompt: str, result_factory) -> str:
 
 
 class CatalogAndBatchingTest(unittest.TestCase):
+    def test_partial_transport_failure_has_no_quality_score(self):
+        summary = summarize((
+            CheckResult(rule_id="ok", status="passed", severity="medium"),
+            CheckResult(rule_id="error", status="error", severity="high", reason="denied"),
+        ))
+        self.assertIsNone(summary.quality_score)
+        self.assertEqual(summary.assessment_coverage, 50.0)
+
     def test_bundled_catalog_contains_all_rules(self):
         profile = load_code_smells_profile()
         self.assertEqual(len(profile.rules), 80)
@@ -49,6 +60,40 @@ class CatalogAndBatchingTest(unittest.TestCase):
     def test_unknown_rule_is_rejected_before_agent_run(self):
         with self.assertRaisesRegex(ValueError, "Unknown rule ids"):
             load_code_smells_profile(rule_ids=["does_not_exist"])
+
+    def test_file_target_is_inlined_for_fixed_workspace_agents(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "service.py"
+            path.write_text("def answer():\n    return 42\n", encoding="utf-8")
+            target = EvaluationTarget.file(path)
+            rule = load_code_smells_profile(rule_ids=["long_method"]).rules
+            payload = request_from_prompt(build_evaluation_prompt("batch-0001", target, rule))
+
+        self.assertEqual(payload["target"]["kind"], "file")
+        self.assertEqual(payload["target"]["path"], str(path.resolve()))
+        self.assertEqual(payload["target"]["language"], "py")
+        self.assertEqual(payload["target"]["content"], "def answer():\n    return 42\n")
+
+    def test_evaluation_prompt_forbids_tools_and_external_file_context(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "service.py"
+            path.write_text("value = 42\n", encoding="utf-8")
+            target = EvaluationTarget.file(path)
+            rule = load_code_smells_profile(rule_ids=["cyclic_dependency"]).rules
+            prompt = build_evaluation_prompt("batch-0001", target, rule)
+
+        self.assertIn("closed-book, tool-free evaluation", prompt)
+        self.assertIn("Never invoke tools", prompt)
+        self.assertIn("analyze only target.content", prompt)
+
+    def test_oversized_file_fails_before_agent_run(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "large.py"
+            path.write_bytes(b"x" * (MAX_INLINE_FILE_BYTES + 1))
+            target = EvaluationTarget.file(path)
+            rule = load_code_smells_profile(rule_ids=["long_method"]).rules
+            with self.assertRaisesRegex(ValueError, "inline limit"):
+                build_evaluation_prompt("batch-0001", target, rule)
 
 
 class EvaluationServiceTest(unittest.IsolatedAsyncioTestCase):
