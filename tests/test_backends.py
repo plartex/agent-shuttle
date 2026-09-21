@@ -1,7 +1,11 @@
+import asyncio
 import json
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from agent_bridge.backends import _decode_agy_result, _decode_agy_usage
+from agent_bridge.backends import CodexBackend, _AntigravityCliSession, _decode_agy_result, _decode_agy_usage
 
 
 class AntigravityCliBackendTests(unittest.TestCase):
@@ -32,6 +36,128 @@ class AntigravityCliBackendTests(unittest.TestCase):
             _decode_agy_usage(json.dumps(payload).encode()),
             {"input_tokens": 123, "output_tokens": 7, "total_tokens": 130},
         )
+
+
+class _FakeWriter:
+    def __init__(self):
+        self.lines = []
+        self.closed = False
+
+    def write(self, data):
+        self.lines.append(data)
+
+    async def drain(self):
+        pass
+
+    def is_closing(self):
+        return self.closed
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProcess:
+    def __init__(self, events):
+        self.stdin = _FakeWriter()
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
+        for event in events:
+            self.stdout.feed_data((json.dumps(event) + "\n").encode())
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
+        self.returncode = None
+
+    async def wait(self):
+        self.returncode = 0
+        return 0
+
+    def kill(self):
+        self.returncode = -9
+
+
+class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_turns_and_cumulative_usage_deltas(self):
+        process = _FakeProcess([
+            {"event": "init", "conversation_id": "test"},
+            {"event": "result", "result": {
+                "status": "SUCCESS", "response": "first", "usage": {
+                    "input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 0,
+                    "total_tokens": 110,
+                },
+            }},
+            {"event": "result", "result": {
+                "status": "SUCCESS", "response": "second", "usage": {
+                    "input_tokens": 130, "output_tokens": 15, "cache_read_tokens": 80,
+                    "total_tokens": 145,
+                },
+            }},
+        ])
+        session = _AntigravityCliSession(process)
+        first = await session.ask("one")
+        second = await session.ask("two")
+        self.assertEqual(first.text, "first")
+        self.assertEqual(second.text, "second")
+        self.assertEqual(first.usage["input_tokens"], 100)
+        self.assertEqual(second.usage["input_tokens"], 30)
+        self.assertEqual(second.usage["cache_read_tokens"], 80)
+        self.assertEqual(len(process.stdin.lines), 2)
+        self.assertEqual(json.loads(process.stdin.lines[1])["message"]["content"], "two")
+        await session.close()
+        self.assertTrue(process.stdin.closed)
+
+
+class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reuses_one_thread_and_closes_runtime(self):
+        runtimes = []
+
+        class FakeThread:
+            def __init__(self):
+                self.calls = []
+
+            async def run(self, prompt):
+                self.calls.append(prompt)
+                last = SimpleNamespace(
+                    input_tokens=100 + len(self.calls), output_tokens=5,
+                    total_tokens=105 + len(self.calls), reasoning_output_tokens=2,
+                    cached_input_tokens=50, cache_write_input_tokens=0,
+                )
+                return SimpleNamespace(
+                    final_response=f"turn {len(self.calls)}",
+                    usage=SimpleNamespace(last=last),
+                )
+
+        class FakeCodex:
+            def __init__(self, config):
+                self.thread = FakeThread()
+                self.started = []
+                self.closed = False
+                runtimes.append(self)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                self.closed = True
+
+            async def thread_start(self, **kwargs):
+                self.started.append(kwargs)
+                return self.thread
+
+        with patch("openai_codex.AsyncCodex", FakeCodex):
+            session = await CodexBackend(Path.cwd()).open_session(
+                "test-model", reasoning_effort="low", read_only=True,
+            )
+            first = await session.ask("one")
+            second = await session.ask("two")
+            self.assertEqual(first.text, "turn 1")
+            self.assertEqual(second.text, "turn 2")
+            self.assertEqual(second.usage["input_tokens"], 102)
+            self.assertEqual(second.usage["cache_read_tokens"], 50)
+            await session.close()
+        self.assertEqual(len(runtimes), 1)
+        self.assertEqual(len(runtimes[0].started), 1)
+        self.assertEqual(runtimes[0].thread.calls, ["one", "two"])
+        self.assertTrue(runtimes[0].closed)
 
 
 if __name__ == "__main__":

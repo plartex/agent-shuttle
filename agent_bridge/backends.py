@@ -1,4 +1,4 @@
-"""Execution adapters. Each A2A request starts a fresh agent conversation."""
+"""Execution adapters for one-shot calls and reusable agent conversations."""
 
 from __future__ import annotations
 
@@ -56,11 +56,40 @@ class Backend(Protocol):
         read_only: bool = False,
     ) -> str | "BackendResponse": ...
 
+    async def open_session(
+        self,
+        model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        read_only: bool = False,
+    ) -> "BackendSession": ...
+
+
+class BackendSession(Protocol):
+    async def ask(self, prompt: str) -> str | "BackendResponse": ...
+
+    async def close(self) -> None: ...
+
 
 @dataclass(frozen=True)
 class BackendResponse:
     text: str
     usage: dict[str, int]
+
+
+def _codex_response(result) -> BackendResponse:
+    """Codex exposes both cumulative and last-turn counters; report the latter."""
+    last = result.usage.last if result.usage is not None else None
+    usage = {} if last is None else {
+        "input_tokens": last.input_tokens,
+        "output_tokens": last.output_tokens,
+        "total_tokens": last.total_tokens,
+        "thinking_tokens": last.reasoning_output_tokens,
+        "cache_read_tokens": last.cached_input_tokens,
+    }
+    if last is not None and last.cache_write_input_tokens is not None:
+        usage["cache_write_tokens"] = last.cache_write_input_tokens
+    return BackendResponse(result.final_response or "", usage)
 
 
 class CodexBackend:
@@ -74,7 +103,7 @@ class CodexBackend:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
-    ) -> str:
+    ) -> BackendResponse:
         from openai_codex import AsyncCodex, CodexConfig, Sandbox
 
         # The Windows CLI needs an explicit home in some non-interactive shells.
@@ -92,7 +121,47 @@ class CodexBackend:
                 sandbox=Sandbox.read_only if read_only else Sandbox.workspace_write,
             )
             result = await thread.run(prompt)
-            return result.final_response or ""
+            return _codex_response(result)
+
+    async def open_session(
+        self,
+        model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        read_only: bool = False,
+    ) -> BackendSession:
+        from openai_codex import AsyncCodex, CodexConfig, Sandbox
+
+        codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
+        codex = AsyncCodex(CodexConfig(env={**os.environ, "CODEX_HOME": codex_home}))
+        await codex.__aenter__()
+        try:
+            thread = await codex.thread_start(
+                cwd=str(self.workspace),
+                model=model,
+                config=(
+                    {"model_reasoning_effort": reasoning_effort}
+                    if reasoning_effort is not None else None
+                ),
+                sandbox=Sandbox.read_only if read_only else Sandbox.workspace_write,
+            )
+        except BaseException:
+            await codex.__aexit__(None, None, None)
+            raise
+        return _CodexSession(codex, thread)
+
+
+class _CodexSession:
+    def __init__(self, codex, thread):
+        self.codex = codex
+        self.thread = thread
+
+    async def ask(self, prompt: str) -> BackendResponse:
+        result = await self.thread.run(prompt)
+        return _codex_response(result)
+
+    async def close(self) -> None:
+        await self.codex.__aexit__(None, None, None)
 
 
 class AntigravityCliBackend:
@@ -134,6 +203,83 @@ class AntigravityCliBackend:
             )
         response = _decode_agy_result(stdout, stderr)
         return BackendResponse(response, _decode_agy_usage(stdout))
+
+    async def open_session(
+        self,
+        model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        read_only: bool = False,
+    ) -> BackendSession:
+        command = [self.command, "--input-format", "stream-json", "--output-format", "stream-json", "--print-timeout", "30m"]
+        if model:
+            command.extend(["--model", model])
+        if reasoning_effort:
+            command.extend(["--effort", reasoning_effort])
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(self.workspace),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=2_000_000,
+        )
+        return _AntigravityCliSession(process)
+
+
+class _AntigravityCliSession:
+    def __init__(self, process: asyncio.subprocess.Process):
+        self.process = process
+        self.previous_usage: dict[str, int] = {}
+        self.stderr_tail = b""
+        self.stderr_task = asyncio.create_task(self._drain_stderr())
+
+    async def _drain_stderr(self) -> None:
+        assert self.process.stderr is not None
+        while chunk := await self.process.stderr.read(4096):
+            self.stderr_tail = (self.stderr_tail + chunk)[-4000:]
+
+    async def ask(self, prompt: str) -> BackendResponse:
+        if self.process.returncode is not None:
+            raise RuntimeError(f"agy session exited ({self.process.returncode}): {self.stderr_tail.decode(errors='replace')}")
+        assert self.process.stdin is not None and self.process.stdout is not None
+        event = {"event": "user", "message": {"content": prompt}}
+        self.process.stdin.write((json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8"))
+        await self.process.stdin.drain()
+        while line := await self.process.stdout.readline():
+            try:
+                payload = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise RuntimeError(f"agy session returned invalid JSON: {exc}") from exc
+            if payload.get("event") != "result":
+                continue
+            result = payload.get("result") or {}
+            if result.get("status") != "SUCCESS":
+                raise RuntimeError(str(result.get("error") or result.get("status") or "agy session failed"))
+            response = result.get("response")
+            if not isinstance(response, str) or not response.strip():
+                raise RuntimeError(
+                    "agy session returned an empty response; a tool may have been soft-denied: "
+                    + self.stderr_tail.decode(errors="replace")
+                )
+            cumulative = _decode_agy_usage(json.dumps(result).encode("utf-8"))
+            delta = {
+                key: max(value - self.previous_usage.get(key, 0), 0)
+                for key, value in cumulative.items()
+            }
+            self.previous_usage = cumulative
+            return BackendResponse(response, delta)
+        raise RuntimeError(f"agy session closed before result: {self.stderr_tail.decode(errors='replace')}")
+
+    async def close(self) -> None:
+        if self.process.stdin is not None and not self.process.stdin.is_closing():
+            self.process.stdin.close()
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            self.process.kill()
+            await self.process.wait()
+        await self.stderr_task
 
 
 def default_agy_python() -> Path:
@@ -190,3 +336,12 @@ class AntigravitySdkBackend:
         if not result.get("ok"):
             raise RuntimeError(result.get("error", "Unknown Antigravity error"))
         return str(result.get("text", ""))
+
+    async def open_session(
+        self,
+        model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        read_only: bool = False,
+    ) -> BackendSession:
+        raise NotImplementedError("Persistent sessions require Antigravity CLI mode")

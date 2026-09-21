@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from dataclasses import dataclass
 
 import httpx
@@ -42,6 +44,25 @@ class BridgeClient:
     async def usage(self, peer_url: str) -> dict:
         return await self._get(peer_url, "/bridge/usage")
 
+    def session(
+        self,
+        peer_url: str,
+        model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        read_only: bool = False,
+    ) -> "BridgeSession":
+        """Create an isolated conversation; use with ``async with`` for cleanup."""
+        return BridgeSession(self, peer_url, model, reasoning_effort, read_only)
+
+    async def close_session(self, peer_url: str, session_id: str) -> bool:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
+            response = await http.delete(
+                peer_url.rstrip("/") + "/bridge/sessions/" + str(uuid.UUID(session_id))
+            )
+            response.raise_for_status()
+            return bool(response.json()["closed"])
+
     async def ask(
         self,
         peer_url: str,
@@ -50,6 +71,7 @@ class BridgeClient:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
+        session_id: str | None = None,
     ) -> BridgeResult:
         if not prompt.strip():
             raise ValueError("prompt must contain text")
@@ -59,6 +81,8 @@ class BridgeClient:
             not isinstance(reasoning_effort, str) or not reasoning_effort.strip()
         ):
             raise ValueError("reasoning_effort must be a nonempty string when provided")
+        if session_id is not None:
+            session_id = str(uuid.UUID(session_id))
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
             client = await create_client(
                 peer_url.rstrip("/"),
@@ -66,13 +90,17 @@ class BridgeClient:
                 resolver_http_kwargs={"timeout": self.timeout_seconds},
             )
             try:
-                message = new_text_message(prompt, role=Role.ROLE_USER)
+                message = new_text_message(
+                    prompt, context_id=session_id, role=Role.ROLE_USER
+                )
                 if model is not None:
                     message.metadata["agent_bridge.model"] = model.strip()
                 if reasoning_effort is not None:
                     message.metadata["agent_bridge.reasoning_effort"] = reasoning_effort.strip()
                 if read_only:
                     message.metadata["agent_bridge.read_only"] = True
+                if session_id is not None:
+                    message.metadata["agent_bridge.session_id"] = session_id
                 request = SendMessageRequest(message=message)
                 last = None
                 async for item in client.send_message(request):
@@ -104,6 +132,56 @@ class BridgeClient:
                 return BridgeResult(peer_url, task.id, task.context_id, state, text, usage)
             finally:
                 await client.close()
+
+
+class BridgeSession:
+    """Reusable per-agent conversation with explicit lifetime and pinned settings."""
+
+    def __init__(
+        self,
+        client: BridgeClient,
+        peer_url: str,
+        model: str | None,
+        reasoning_effort: str | None,
+        read_only: bool,
+    ):
+        self.client = client
+        self.peer_url = peer_url
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.read_only = read_only
+        self.id = str(uuid.uuid4())
+        self._closed = False
+        self._started = False
+        self._lock = asyncio.Lock()
+
+    async def __aenter__(self) -> "BridgeSession":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
+
+    async def ask(self, prompt: str) -> BridgeResult:
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("Bridge session is closed")
+            self._started = True
+            return await self.client.ask(
+                self.peer_url,
+                prompt,
+                model=self.model,
+                reasoning_effort=self.reasoning_effort,
+                read_only=self.read_only,
+                session_id=self.id,
+            )
+
+    async def close(self) -> None:
+        async with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._started:
+                await self.client.close_session(self.peer_url, self.id)
 
 
 def _parts(parts) -> str:
