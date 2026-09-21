@@ -65,96 +65,14 @@ $env:BRIDGE_AGY_COMMAND = 'C:\path\to\agy.exe'
 | `ask_codex(prompt, model?, reasoning_effort?)` | Поставить задачу Codex |
 | `get_antigravity_info()` | Получить модели, effort и квоты Antigravity |
 | `get_codex_info()` | Получить модели, effort и квоты Codex |
-| `evaluate(target_type, target, ...)` | Проверить сниппет или файл пакетами LLM-правил; проектный режим пока закрыт |
 
 ```text
 ask_antigravity(prompt="Проверь тесты", model="gemini-3.8-flash-medium", reasoning_effort="medium")
 ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra", reasoning_effort="high")
 ```
 
-## Проверка качества кода
-
-Встроенный профиль `code_smells` содержит 80 правил. LLM-агент выполняет их пакетами, а мост локально проверяет структуру ответа, агрегирует результаты и рассчитывает итоговую оценку. Анализ только выявляет запахи: он не предлагает исправления и не изменяет код.
-
-Для цели `file` содержимое файла (до 1 МБ) передаётся агенту прямо в запросе.
-Поэтому одиночный файл можно проверять за пределами workspace запущенного агента без
-дополнительных разрешений на файловую систему. Цель `project` пока отклоняется
-до обращения к модели: передача содержимого проекта ещё не реализована.
-
-Цель всегда задаётся явно:
-
-```powershell
-# Фрагмент кода
-& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate snippet `
-  --code 'def process_order(): ...' --language python
-
-# Один файл
-& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file .\src\service.py `
-  --provider agent-bridge:codex --model gpt-5.6-terra --reasoning-effort high
-
-```
-
-Можно выбрать отдельные правила:
-
-```powershell
-& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file .\src\service.py `
-  --rules long_method,large_class,duplicate_code
-```
-
-Результат отдельной проверки имеет один из статусов: `passed`, `failed`, `skipped`, `inconclusive` или `error`. Для `failed` агент обязан вернуть файл, строки и доказательство; ссылки за пределами переданной цели отклоняются. Невалидный ответ один раз отправляется агенту на исправление.
-
-Для подробного хода проверки добавьте `--debug`:
-
-```powershell
-& .\.venv\Scripts\python.exe -m agent_bridge.cli evaluate file 'D:\VM\common\backend-mono\services\backend\app\adauth\rls.py' `
-  --provider agent-bridge:antigravity --model gemini-3.8-flash-medium `
-  --reasoning-effort medium --json --debug --output rls.debug.json
-```
-
-Поток `[debug]` идёт в stderr сразу по ходу работы: начало пакета и список правил,
-размер запроса, ответ и `usage` провайдера, проверка JSON, возможная повторная
-попытка, время и статусы. JSON-файл дополнительно содержит `debug_trace`.
-Исходный код и полные промпты в трассу не записываются. В `run_finished` поле
-`usage_totals` суммирует только предоставленные провайдером счётчики;
-`usage_reported_calls` показывает, для скольких `agent_requests` они доступны.
-Antigravity CLI выдаёт токены; Codex backend пока не передаёт per-run usage.
-
-При `file` содержимое повторяется в каждом пакете. Число пакетов определяется
-также областью применения правил: 80 правил при `--batch-size 10` образуют
-13 пакетов. Для `project` текущий Bridge не передаёт содержимое проекта в
-запрос и имеет фиксированный workspace. Такой запрос отклоняется до вызова
-модели, чтобы не тратить квоту на фиктивную проверку. Полноценное сканирование
-произвольного проекта и прогноз расхода для него пока не реализованы.
-
-Если хотя бы один пакет завершился с `error`, итоговый `quality_score` равен `null`:
-оценка по частичному набору правил не выдаётся за качество всего запуска.
-
-Текстовый итог выглядит так:
-
-```text
-Code Smells: 72/80 PASSED
-FAILED: 5 · SKIPPED: 2 · INCONCLUSIVE: 1 · ERRORS: 0
-Code quality: 87.3% · Assessment coverage: 96.2%
-```
-
-Python API:
-
-```python
-from agent_bridge.evaluation import EvaluationService, EvaluationTarget, load_code_smells_profile
-from agent_bridge.evaluation.providers import AgentBridgeProvider
-
-provider = AgentBridgeProvider("http://127.0.0.1:8765", "codex")
-report = await EvaluationService(provider).evaluate(
-    EvaluationTarget.file("D:/projects/example/service.py"),
-    load_code_smells_profile(),
-    batch_size=10,
-)
-print(report.to_json())
-```
-
-Codex-запросы evaluation запускаются с read-only sandbox. Текущий Antigravity CLI не предоставляет мосту эквивалентной гарантии, поэтому отчёт содержит предупреждение о режиме доступа.
-
-Если Antigravity CLI не обнаруживает `.agents/mcp_config.json`, зарегистрируйте stdio-сервер через `agy mcp add`. Для headless вызовов разрешите конкретные инструменты правилами вида `mcp(agent-bridge/ask_codex)` в `~/.gemini/antigravity-cli/settings.json`. Формат правил описан в [документации Antigravity](https://antigravity.google/docs/cli/permissions/).
+Проверка качества кода вынесена в отдельную библиотеку `agent-code-checker`.
+Она использует Agent Bridge как зависимость; сам Bridge не содержит правил и оценок.
 
 ## Выбор модели
 
@@ -261,7 +179,6 @@ $env:BRIDGE_AGY_MODE = 'sdk'
 
 ## Документация
 
-- [Проект LLM-first evaluation framework](docs/evaluation-framework-design.md)
 - [A2A Protocol](https://a2a-protocol.org/latest/)
 - [Antigravity CLI overview](https://antigravity.google/docs/cli/overview/)
 - [Antigravity headless mode](https://antigravity.google/docs/cli/headless/)

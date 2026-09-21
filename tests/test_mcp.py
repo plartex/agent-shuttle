@@ -28,14 +28,8 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
                         self.assertIn("reasoning_effort", tool.inputSchema["properties"])
         self.assertEqual(
             names,
-            {"ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info", "evaluate"},
+            {"ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info"},
         )
-        evaluate = next(tool for tool in tools if tool.name == "evaluate")
-        self.assertIn("target_type", evaluate.inputSchema["properties"])
-        self.assertIn("target", evaluate.inputSchema["properties"])
-        self.assertIn("batch_size", evaluate.inputSchema["properties"])
-        self.assertIn("model", evaluate.inputSchema["properties"])
-        self.assertIn("reasoning_effort", evaluate.inputSchema["properties"])
 
 
 if __name__ == "__main__":
