@@ -1,6 +1,6 @@
-# Codex ↔ Antigravity Agent Bridge
+# Agent Bridge: Codex, Antigravity, OpenCode и Claude Code
 
-Локальный двусторонний мост между harness-агентами OpenAI Codex и Google Antigravity.
+Локальный A2A/MCP-мост между harness-агентами Codex, Antigravity, OpenCode и Claude Code. OpenCode и Claude Code поддерживают локальные модели Ollama; другие провайдеры задаются серверным профилем.
 
 - **A2A 1.0 JSON-RPC** между самостоятельными агентами.
 - **MCP tools** для вызова второго агента из Codex или Antigravity.
@@ -9,6 +9,30 @@
 - Выбор модели при каждом запросе.
 - Отдельный интерфейс моделей, reasoning effort и текущих квот аккаунта.
 - Основной режим использует вход в аккаунты Codex и Antigravity, а не ключи LLM API.
+
+## Профили OpenCode и Claude Code
+
+Новые runtime подключаются через серверный JSON-профиль, а не через отдельный класс для каждого поставщика модели. Установите OpenCode либо Claude Code и запустите Ollama с моделью, указанной в профиле. Примеры [OpenCode](examples/opencode-ollama.json) и [Claude Code](examples/claude-code-ollama.json) используют `qwen3.5:9b`; замените ID на свою установленную модель. Относительный `workspace` считается от каталога JSON-файла.
+
+```powershell
+# Два независимых локальных A2A-сервера; запускать в разных терминалах:
+& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\opencode-ollama.json --port 8767
+& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\claude-code-ollama.json --port 8768
+
+# Отправка задачи в любой из них:
+& .\.venv\Scripts\agent-bridge.exe ask http://127.0.0.1:8767 "Ответь одним словом: OK" --model qwen3.5:9b --reasoning-effort none --tool-policy no_tools
+& .\.venv\Scripts\agent-bridge.exe ask http://127.0.0.1:8768 "Ответь одним словом: OK" --model qwen3.5:9b --tool-policy no_tools
+```
+
+`agent-bridge info URL` возвращает разрешённые модели, усилия рассуждения и максимальную политику инструментов. `no_tools` запрещает инструменты; `read_only` разрешает чтение/поиск; `workspace_write` включает модификацию проекта и потому требует явного разрешения в профиле. Запрос не может расширить `max_tool_policy`, заменить endpoint либо передать секрет. Политики инструментов — ограничение интерфейса агента, **не OS-песочница**: не запускайте недоверенный код без системной изоляции.
+
+Для OpenCode кроме Ollama доступны встроенные провайдеры OpenCode: задайте `provider`, разрешённые `allowed_models` и нужный `credential_env` в профиле, а аутентификацию настройте в самом runtime. Для Claude Code поддержаны стандартный Anthropic и Ollama-совместимый endpoint. Совместимость конкретного стороннего провайдера/модели нужно проверять отдельно; наличие ID в профиле не гарантирует поддержку runtime. `reasoning_efforts` — явный allowlist профиля; Ollama/OpenCode использует варианты модели, Claude Code передаёт поддерживаемый effort в CLI.
+
+Для MCP задайте `BRIDGE_AGENTS_JSON` как словарь ID→локальный URL, например `{"opencode-local":"http://127.0.0.1:8767","claude-local":"http://127.0.0.1:8768"}`. Инструменты `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?)` и `get_agent_info(agent_id)` работают с любым таким профилем. Старые `ask_codex` и `ask_antigravity` сохранены.
+
+Python API также сохраняет сессию для нескольких ходов: `AgentProfile.from_file(path)`, затем `backend, info = build_profile(profile)`, `session = await backend.open_session(...)`, `await session.ask(...)`, `await session.close()`, `await backend.close()`. Новая сессия фиксирует модель, effort и политику инструментов; менять их между ходами нельзя. Секреты храните в переменных окружения, не в JSON.
+
+Локальные интеграционные тесты по умолчанию пропускаются. Для проверки обеих связок установите `BRIDGE_LIVE_OLLAMA_MODEL` в ID установленной модели и запустите `python -m unittest tests.test_live_ollama -v`; при необходимости укажите абсолютные пути в `BRIDGE_LIVE_OPENCODE_COMMAND` и `BRIDGE_LIVE_CLAUDE_COMMAND`.
 
 > Статус: alpha. Мост предназначен для локальной разработки и слушает только `127.0.0.1`.
 
