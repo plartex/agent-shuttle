@@ -7,10 +7,11 @@ test:
   stage: test
   before_script:
     - python -m pip install --upgrade pip
-    - python -m pip install -e .
+    - python -m pip install -e '.[test]'
   script:
     - python -m compileall -q agent_bridge
-    - python -m unittest discover -s tests -v
+    - python -m coverage run --branch --source=agent_bridge -m unittest discover -s tests -v
+    - python -m coverage report --fail-under=90
   cache:
     paths:
       - .cache/pip
