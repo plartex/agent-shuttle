@@ -14,13 +14,16 @@ from .a2a_server import make_app
 from .backends import AntigravityCliBackend, AntigravitySdkBackend, CodexBackend
 from .client import BridgeClient
 from .info import AntigravityCliInfo, AntigravitySdkInfo, CodexInfo
+from .profiles import AgentProfile
+from .registry import build_profile
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="agent-bridge")
     sub = parser.add_subparsers(dest="command", required=True)
-    serve = sub.add_parser("serve", help="Expose Codex or Antigravity as a local A2A agent")
-    serve.add_argument("agent", choices=["codex", "antigravity"])
+    serve = sub.add_parser("serve", help="Expose a local agent profile through A2A")
+    serve.add_argument("agent", choices=["codex", "antigravity", "profile"])
+    serve.add_argument("--profile", type=Path, help="JSON profile for OpenCode or Claude Code")
     serve.add_argument("--workspace", type=Path, default=Path.cwd())
     serve.add_argument("--port", type=int, required=True)
     serve.add_argument("--agy-command", default=os.environ.get("BRIDGE_AGY_COMMAND", "agy"))
@@ -31,6 +34,7 @@ def main() -> None:
     ask.add_argument("prompt")
     ask.add_argument("--model", help="Select the remote agent's model ID")
     ask.add_argument("--reasoning-effort", help="Select the provider-specific reasoning effort")
+    ask.add_argument("--tool-policy", choices=["no_tools", "read_only", "workspace_write"])
     info = sub.add_parser("info", help="Read live models, reasoning efforts and account quotas")
     info.add_argument("url")
     args = parser.parse_args()
@@ -41,6 +45,7 @@ def main() -> None:
                 args.prompt,
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
+                tool_policy=args.tool_policy,
             )
         )
         print(f"{result.state} task={result.task_id}")
@@ -49,20 +54,30 @@ def main() -> None:
     if args.command == "info":
         print(json.dumps(asyncio.run(BridgeClient().info(args.url)), ensure_ascii=False, indent=2))
         return
-    workspace = args.workspace.resolve(strict=True)
-    if not workspace.is_dir():
-        parser.error("--workspace must be a directory")
+    if args.agent == "profile":
+        if args.profile is None:
+            parser.error("serve profile requires --profile JSON_PATH")
+        profile = AgentProfile.from_file(args.profile)
+        backend, info_provider = build_profile(profile)
+        name = profile.id
+    else:
+        if args.profile is not None:
+            parser.error("--profile is only valid with serve profile")
+        workspace = args.workspace.resolve(strict=True)
+        if not workspace.is_dir():
+            parser.error("--workspace must be a directory")
+        name = args.agent
     if args.agent == "codex":
         backend = CodexBackend(workspace)
         info_provider = CodexInfo(workspace)
-    elif args.agy_mode == "sdk":
+    elif args.agent == "antigravity" and args.agy_mode == "sdk":
         backend = AntigravitySdkBackend(workspace, args.agy_python)
         info_provider = AntigravitySdkInfo()
-    else:
+    elif args.agent == "antigravity":
         backend = AntigravityCliBackend(workspace, args.agy_command)
         info_provider = AntigravityCliInfo(workspace, args.agy_command)
     url = f"http://127.0.0.1:{args.port}"
-    uvicorn.run(make_app(args.agent, backend, url, info_provider), host="127.0.0.1", port=args.port)
+    uvicorn.run(make_app(name, backend, url, info_provider), host="127.0.0.1", port=args.port)
 
 
 if __name__ == "__main__":

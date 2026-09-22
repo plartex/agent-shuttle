@@ -28,7 +28,10 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
                         self.assertIn("reasoning_effort", tool.inputSchema["properties"])
         self.assertEqual(
             names,
-            {"ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info"},
+            {
+                "ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info",
+                "ask_agent", "get_agent_info",
+            },
         )
 
 
