@@ -22,12 +22,13 @@ from starlette.routing import Route
 
 from .backends import Backend, BackendResponse, BackendSession
 from .info import InfoProvider
+from .profiles import ToolPolicy
 
 
 @dataclass
 class _SessionRecord:
     backend: BackendSession
-    settings: tuple[str | None, str | None, bool]
+    settings: tuple[str | None, str | None, bool, str | None]
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_used: float = field(default_factory=monotonic)
     closed: bool = False
@@ -49,18 +50,20 @@ class SessionManager:
         model: str | None,
         reasoning_effort: str | None,
         read_only: bool,
+        tool_policy: str | None = None,
     ) -> str | BackendResponse:
-        settings = (model, reasoning_effort, read_only)
+        settings = (model, reasoning_effort, read_only, tool_policy)
         async with self.lock:
             record = self.sessions.get(session_id)
             if record is None:
-                session = await self.backend.open_session(
-                    model, reasoning_effort=reasoning_effort, read_only=read_only
-                )
+                kwargs = {"reasoning_effort": reasoning_effort, "read_only": read_only}
+                if tool_policy is not None:
+                    kwargs["tool_policy"] = tool_policy
+                session = await self.backend.open_session(model, **kwargs)
                 record = _SessionRecord(session, settings)
                 self.sessions[session_id] = record
             elif record.settings != settings:
-                raise ValueError("Model, reasoning effort, and read_only cannot change within a session")
+                raise ValueError("Model, reasoning effort, and tool policy cannot change within a session")
             record.last_used = monotonic()
         async with record.lock:
             if record.closed:
@@ -108,13 +111,16 @@ class BridgeExecutor(AgentExecutor):
         self.sessions = sessions
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        prompt = get_message_text(context.message).strip()
+        if not prompt and not context.current_task:
+            await event_queue.enqueue_event(new_text_message("A text task is required"))
+            return
         if context.current_task:
             task = context.current_task
         else:
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue, task.id, task.context_id)
-        prompt = get_message_text(context.message).strip()
         if not prompt:
             await updater.update_status(
                 TaskState.TASK_STATE_REJECTED,
@@ -150,6 +156,21 @@ class BridgeExecutor(AgentExecutor):
                 new_text_message("agent_bridge.read_only must be a boolean"),
             )
             return
+        tool_policy = None
+        if "agent_bridge.tool_policy" in context.message.metadata:
+            tool_policy = context.message.metadata["agent_bridge.tool_policy"]
+            if not isinstance(tool_policy, str) or tool_policy not in {p.value for p in ToolPolicy}:
+                await updater.update_status(
+                    TaskState.TASK_STATE_REJECTED,
+                    new_text_message("agent_bridge.tool_policy is invalid"),
+                )
+                return
+            if read_only and tool_policy != ToolPolicy.READ_ONLY.value:
+                await updater.update_status(
+                    TaskState.TASK_STATE_REJECTED,
+                    new_text_message("read_only conflicts with tool_policy"),
+                )
+                return
         session_id = (
             context.message.metadata["agent_bridge.session_id"]
             if "agent_bridge.session_id" in context.message.metadata else None
@@ -172,12 +193,15 @@ class BridgeExecutor(AgentExecutor):
         await updater.update_status(TaskState.TASK_STATE_WORKING)
         try:
             if session_id is None:
+                kwargs = {"reasoning_effort": reasoning_effort, "read_only": read_only}
+                if tool_policy is not None:
+                    kwargs["tool_policy"] = tool_policy
                 answer = await self.backend.run(
-                    prompt, model, reasoning_effort=reasoning_effort, read_only=read_only,
+                    prompt, model, **kwargs,
                 )
             else:
                 answer = await self.sessions.run(
-                    session_id, prompt, model, reasoning_effort, read_only,
+                    session_id, prompt, model, reasoning_effort, read_only, tool_policy,
                 )
         except Exception as exc:
             await updater.update_status(
@@ -187,7 +211,12 @@ class BridgeExecutor(AgentExecutor):
             return
         metadata = None
         if isinstance(answer, BackendResponse):
-            metadata = {"agent_bridge.usage": answer.usage} if answer.usage else None
+            metadata = {}
+            if answer.usage:
+                metadata["agent_bridge.usage"] = answer.usage
+            if answer.details:
+                metadata["agent_bridge.details"] = answer.details
+            metadata = metadata or None
             answer = answer.text
         await updater.add_artifact(
             [new_text_part(answer, media_type="text/plain")],
@@ -269,6 +298,9 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             except asyncio.CancelledError:
                 pass
             await sessions.close_all()
+            shutdown = getattr(backend, "close", None)
+            if shutdown is not None:
+                await shutdown()
 
     return Starlette(
         lifespan=lifespan,

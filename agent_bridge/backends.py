@@ -75,6 +75,7 @@ class BackendSession(Protocol):
 class BackendResponse:
     text: str
     usage: dict[str, int]
+    details: dict | None = None
 
 
 def _codex_response(result) -> BackendResponse:
@@ -306,6 +307,10 @@ class AntigravitySdkBackend:
     ) -> str:
         if not self.python.is_file():
             raise RuntimeError(f"Antigravity Python environment missing: {self.python}")
+        if reasoning_effort is not None:
+            raise RuntimeError(
+                "Antigravity SDK mode does not expose reasoning effort; use the default CLI mode"
+            )
         process = await asyncio.create_subprocess_exec(
             str(self.python),
             "-m",
@@ -316,10 +321,6 @@ class AntigravitySdkBackend:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        if reasoning_effort is not None:
-            raise RuntimeError(
-                "Antigravity SDK mode does not expose reasoning effort; use the default CLI mode"
-            )
         payload = json.dumps({"prompt": prompt, "workspace": str(self.workspace), "model": model}).encode()
         try:
             stdout, stderr = await process.communicate(payload)

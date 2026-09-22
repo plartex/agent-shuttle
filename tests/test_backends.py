@@ -1,11 +1,15 @@
 import asyncio
 import json
 import unittest
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_bridge.backends import CodexBackend, _AntigravityCliSession, _decode_agy_result, _decode_agy_usage
+from agent_bridge.backends import (
+    AntigravityCliBackend, AntigravitySdkBackend, CodexBackend,
+    _AntigravityCliSession, _decode_agy_result, _decode_agy_usage,
+)
 
 
 class AntigravityCliBackendTests(unittest.TestCase):
@@ -158,6 +162,100 @@ class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(runtimes[0].started), 1)
         self.assertEqual(runtimes[0].thread.calls, ["one", "two"])
         self.assertTrue(runtimes[0].closed)
+
+
+class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_one_shot_returns_last_turn_usage(self):
+        class Thread:
+            async def run(self, prompt):
+                last = SimpleNamespace(input_tokens=8, output_tokens=3, total_tokens=11,
+                                       reasoning_output_tokens=1, cached_input_tokens=2,
+                                       cache_write_input_tokens=None)
+                return SimpleNamespace(final_response="ok", usage=SimpleNamespace(last=last))
+
+        class Codex:
+            def __init__(self, config):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def thread_start(self, **kwargs):
+                self.settings = kwargs
+                return Thread()
+
+        with patch("openai_codex.AsyncCodex", Codex):
+            result = await CodexBackend(Path.cwd()).run("hello", "test", reasoning_effort="high")
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(result.usage["cache_read_tokens"], 2)
+        self.assertNotIn("cache_write_tokens", result.usage)
+
+    async def test_antigravity_cli_one_shot_parses_response_and_usage(self):
+        class Process:
+            returncode = 0
+
+            async def communicate(self):
+                return json.dumps({"status": "SUCCESS", "response": "ok", "usage": {
+                    "input_tokens": 10, "output_tokens": 2,
+                }}).encode(), b""
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
+            response = await AntigravityCliBackend(Path.cwd()).run(
+                "hello", "chosen", reasoning_effort="high", read_only=True,
+            )
+        self.assertEqual(response.text, "ok")
+        self.assertEqual(response.usage["input_tokens"], 10)
+        self.assertIn("--model", spawn.call_args.args)
+        self.assertIn("--effort", spawn.call_args.args)
+
+    async def test_antigravity_cli_nonzero_reports_stderr(self):
+        class Process:
+            returncode = 2
+
+            async def communicate(self):
+                return b"", b"bad model"
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
+            with self.assertRaisesRegex(RuntimeError, "bad model"):
+                await AntigravityCliBackend(Path.cwd()).run("hello")
+
+    async def test_sdk_requires_worker_and_rejects_effort(self):
+        backend = AntigravitySdkBackend(Path.cwd(), Path.cwd() / "nonexistent-python")
+        with self.assertRaisesRegex(RuntimeError, "missing"):
+            await backend.run("hello")
+        with self.assertRaises(NotImplementedError):
+            await backend.open_session()
+
+    async def test_sdk_worker_success_and_soft_failure(self):
+        class Process:
+            def __init__(self, output):
+                self.output = output
+                self.returncode = 0
+
+            async def communicate(self, payload):
+                self.payload = json.loads(payload)
+                return self.output, b""
+
+        backend = AntigravitySdkBackend(Path.cwd(), Path(sys.executable))
+        success = Process(b'noise\nAGENT_BRIDGE_RESULT={"ok": true, "text": "reply"}\n')
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=success):
+            self.assertEqual(await backend.run("hello", "model"), "reply")
+        self.assertEqual(success.payload["model"], "model")
+
+        failure = Process(b'AGENT_BRIDGE_RESULT={"ok": false, "error": "denied"}\n')
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=failure):
+            with self.assertRaisesRegex(RuntimeError, "denied"):
+                await backend.run("hello")
+
+    async def test_sdk_effort_rejected_without_starting_worker(self):
+        backend = AntigravitySdkBackend(Path.cwd(), Path(sys.executable))
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec") as spawn:
+            with self.assertRaisesRegex(RuntimeError, "does not expose reasoning"):
+                await backend.run("hello", reasoning_effort="high")
+            spawn.assert_not_called()
 
 
 if __name__ == "__main__":

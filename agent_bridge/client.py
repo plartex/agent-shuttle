@@ -13,6 +13,8 @@ from a2a.client import ClientConfig, create_client
 from a2a.helpers import new_text_message
 from a2a.types import Role, SendMessageRequest, TaskState
 
+from .profiles import ToolPolicy
+
 
 @dataclass(frozen=True)
 class BridgeResult:
@@ -22,6 +24,7 @@ class BridgeResult:
     state: str
     text: str
     usage: dict[str, int] | None = None
+    details: dict | None = None
 
 
 class BridgeClient:
@@ -51,9 +54,10 @@ class BridgeClient:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
+        tool_policy: str | None = None,
     ) -> "BridgeSession":
         """Create an isolated conversation; use with ``async with`` for cleanup."""
-        return BridgeSession(self, peer_url, model, reasoning_effort, read_only)
+        return BridgeSession(self, peer_url, model, reasoning_effort, read_only, tool_policy)
 
     async def close_session(self, peer_url: str, session_id: str) -> bool:
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
@@ -71,6 +75,7 @@ class BridgeClient:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
+        tool_policy: str | None = None,
         session_id: str | None = None,
     ) -> BridgeResult:
         if not prompt.strip():
@@ -81,6 +86,13 @@ class BridgeClient:
             not isinstance(reasoning_effort, str) or not reasoning_effort.strip()
         ):
             raise ValueError("reasoning_effort must be a nonempty string when provided")
+        if tool_policy is not None:
+            try:
+                ToolPolicy(tool_policy)
+            except ValueError as exc:
+                raise ValueError("tool_policy must be no_tools, read_only, or workspace_write") from exc
+            if read_only and tool_policy != ToolPolicy.READ_ONLY.value:
+                raise ValueError("read_only conflicts with tool_policy")
         if session_id is not None:
             session_id = str(uuid.UUID(session_id))
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
@@ -99,6 +111,8 @@ class BridgeClient:
                     message.metadata["agent_bridge.reasoning_effort"] = reasoning_effort.strip()
                 if read_only:
                     message.metadata["agent_bridge.read_only"] = True
+                if tool_policy is not None:
+                    message.metadata["agent_bridge.tool_policy"] = tool_policy
                 if session_id is not None:
                     message.metadata["agent_bridge.session_id"] = session_id
                 request = SendMessageRequest(message=message)
@@ -116,9 +130,11 @@ class BridgeClient:
                 state = TaskState.Name(task.status.state)
                 text = "\n".join(_parts(artifact.parts) for artifact in task.artifacts).strip()
                 usage = None
+                details = None
                 for artifact in task.artifacts:
                     if artifact.HasField("metadata"):
-                        candidate = MessageToDict(artifact.metadata).get("agent_bridge.usage")
+                        artifact_metadata = MessageToDict(artifact.metadata)
+                        candidate = artifact_metadata.get("agent_bridge.usage")
                         if isinstance(candidate, dict):
                             usage = {
                                 key: int(value) for key, value in candidate.items()
@@ -127,9 +143,12 @@ class BridgeClient:
                                 and value >= 0
                                 and float(value).is_integer()
                             }
+                        candidate_details = artifact_metadata.get("agent_bridge.details")
+                        if isinstance(candidate_details, dict):
+                            details = candidate_details
                 if not text and task.status.HasField("message"):
                     text = _parts(task.status.message.parts)
-                return BridgeResult(peer_url, task.id, task.context_id, state, text, usage)
+                return BridgeResult(peer_url, task.id, task.context_id, state, text, usage, details)
             finally:
                 await client.close()
 
@@ -144,12 +163,14 @@ class BridgeSession:
         model: str | None,
         reasoning_effort: str | None,
         read_only: bool,
+        tool_policy: str | None,
     ):
         self.client = client
         self.peer_url = peer_url
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.read_only = read_only
+        self.tool_policy = tool_policy
         self.id = str(uuid.uuid4())
         self._closed = False
         self._started = False
@@ -172,6 +193,7 @@ class BridgeSession:
                 model=self.model,
                 reasoning_effort=self.reasoning_effort,
                 read_only=self.read_only,
+                tool_policy=self.tool_policy,
                 session_id=self.id,
             )
 

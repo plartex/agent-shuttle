@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import json
+import re
+from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 
@@ -10,9 +13,10 @@ from .client import BridgeClient
 
 
 mcp = FastMCP(
-    "Codex Antigravity A2A bridge",
+    "Agent Bridge",
     instructions=(
-        "Use ask_antigravity to delegate a task to Antigravity and ask_codex to delegate a task to Codex. "
+        "Use ask_agent for configured OpenCode, Claude Code, or other agent profiles. "
+        "The legacy ask_antigravity and ask_codex tools remain available. "
         "Use get_antigravity_info or get_codex_info to check current models, efforts and account quotas. "
         "Each call starts a new remote task. When the user names a model for the remote agent, "
         "pass that model ID exactly in the optional model parameter. When the user names a "
@@ -42,7 +46,56 @@ async def _ask(
         "context_id": result.context_id,
         "state": result.state,
         "text": result.text,
+        "usage": result.usage,
+        "details": result.details,
     }
+
+
+def _agent_url(agent_id: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", agent_id):
+        raise ValueError("agent_id must contain only letters, digits, hyphen, or underscore")
+    configured = os.environ.get("BRIDGE_AGENTS_JSON", "{}")
+    try:
+        mapping = json.loads(configured)
+    except json.JSONDecodeError as exc:
+        raise ValueError("BRIDGE_AGENTS_JSON must be a JSON object") from exc
+    if not isinstance(mapping, dict):
+        raise ValueError("BRIDGE_AGENTS_JSON must be a JSON object")
+    url = mapping.get(agent_id)
+    if url is None:
+        raise ValueError(f"Unknown agent profile {agent_id!r} in BRIDGE_AGENTS_JSON")
+    if not isinstance(url, str):
+        raise ValueError("Agent URL must be a string")
+    parsed = urlparse(url)
+    if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("Agent URL must use local HTTP loopback")
+    return url.rstrip("/")
+
+
+@mcp.tool()
+async def ask_agent(
+    agent_id: str,
+    prompt: str,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    tool_policy: str | None = None,
+) -> dict:
+    """Ask a configured agent profile from BRIDGE_AGENTS_JSON."""
+    result = await BridgeClient().ask(
+        _agent_url(agent_id), prompt, model=model,
+        reasoning_effort=reasoning_effort, tool_policy=tool_policy,
+    )
+    return {
+        "task_id": result.task_id, "context_id": result.context_id,
+        "state": result.state, "text": result.text,
+        "usage": result.usage, "details": result.details,
+    }
+
+
+@mcp.tool()
+async def get_agent_info(agent_id: str) -> dict:
+    """Read capabilities and quota information for a configured agent profile."""
+    return await BridgeClient().info(_agent_url(agent_id))
 
 
 @mcp.tool()
