@@ -13,6 +13,7 @@ import uvicorn
 from .a2a_server import make_app
 from .backends import AntigravityCliBackend, AntigravitySdkBackend, CodexBackend
 from .client import BridgeClient
+from .discovery import discover_harnesses
 from .info import AntigravityCliInfo, AntigravitySdkInfo, CodexInfo
 from .profiles import AgentProfile
 from .registry import build_profile
@@ -37,7 +38,18 @@ def main() -> None:
     ask.add_argument("--tool-policy", choices=["no_tools", "read_only", "workspace_write"])
     info = sub.add_parser("info", help="Read live models, reasoning efforts and account quotas")
     info.add_argument("url")
+    discover = sub.add_parser("discover", help="List locally installed harnesses without starting them")
+    discover.add_argument("--agy-command")
+    discover.add_argument("--opencode-command")
+    discover.add_argument("--claude-command")
     args = parser.parse_args()
+    if args.command == "discover":
+        overrides = {name: value for name, value in (
+            ("antigravity", args.agy_command), ("opencode", args.opencode_command),
+            ("claude_code", args.claude_command),
+        ) if value}
+        print(json.dumps(discover_harnesses(overrides), ensure_ascii=False, indent=2))
+        return
     if args.command == "ask":
         result = asyncio.run(
             BridgeClient().ask(

@@ -9,6 +9,14 @@ from agent_bridge.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_discover_uses_manual_override_without_starting_server(self):
+        with patch("sys.argv", ["agent-bridge", "discover", "--opencode-command", "C:/tools/opencode.exe"]), \
+             patch("agent_bridge.cli.discover_harnesses", return_value={"opencode": "C:/tools/opencode.exe"}) as discover, \
+             patch("builtins.print") as output:
+            main()
+        self.assertEqual(discover.call_args.args[0], {"opencode": "C:/tools/opencode.exe"})
+        self.assertEqual(json.loads(output.call_args.args[0]), {"opencode": "C:/tools/opencode.exe"})
+
     def test_serve_profile_uses_registry_and_profile_name(self):
         with tempfile.TemporaryDirectory() as folder:
             profile = Path(folder) / "profile.json"
