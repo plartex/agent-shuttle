@@ -28,6 +28,25 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main()
 
+    def test_profile_workspace_can_be_overridden_for_consumer_project(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            profile_path = root / "profile.json"
+            project = root / "consumer"
+            project.mkdir()
+            profile_path.write_text(json.dumps({
+                "id": "claude-local", "runtime": "claude_code", "provider": "ollama",
+                "workspace": "C:/old-machine/missing-project", "default_model": "test",
+                "allowed_models": ["test"],
+            }), encoding="utf-8")
+            with patch("sys.argv", ["agent-bridge", "serve", "profile", "--profile",
+                                    str(profile_path), "--workspace", str(project), "--port", "8768"]), \
+                 patch("agent_bridge.cli.build_profile") as build, \
+                 patch("agent_bridge.cli.uvicorn.run"):
+                build.return_value = (object(), object())
+                main()
+            self.assertEqual(build.call_args.args[0].workspace, project.resolve())
+
     def test_ask_forwards_model_effort_and_policy(self):
         result = SimpleNamespace(state="TASK_STATE_COMPLETED", task_id="1", text="ok")
         with patch("sys.argv", ["agent-bridge", "ask", "http://127.0.0.1:8767", "hello",
