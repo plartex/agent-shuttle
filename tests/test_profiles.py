@@ -93,6 +93,14 @@ class AgentProfileTests(unittest.TestCase):
         }), encoding="utf-8")
         self.assertEqual(AgentProfile.from_file(profile_path).workspace, self.workspace.resolve())
 
+    def test_file_without_workspace_defaults_to_profile_directory(self):
+        profile_path = self.workspace / "portable.json"
+        profile_path.write_text(json.dumps({
+            "id": "local", "runtime": "claude_code", "provider": "ollama",
+            "default_model": "test", "allowed_models": ["test"],
+        }), encoding="utf-8")
+        self.assertEqual(AgentProfile.from_file(profile_path).workspace, self.workspace.resolve())
+
     def test_rejects_non_loopback_attached_runtime(self):
         with self.assertRaisesRegex(ValueError, "runtime_url"):
             self.profile(runtime_url="http://example.com:4096")

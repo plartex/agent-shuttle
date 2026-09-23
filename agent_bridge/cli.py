@@ -24,7 +24,7 @@ def main() -> None:
     serve = sub.add_parser("serve", help="Expose a local agent profile through A2A")
     serve.add_argument("agent", choices=["codex", "antigravity", "profile"])
     serve.add_argument("--profile", type=Path, help="JSON profile for OpenCode or Claude Code")
-    serve.add_argument("--workspace", type=Path, default=Path.cwd())
+    serve.add_argument("--workspace", type=Path, help="Project directory; overrides profile workspace")
     serve.add_argument("--port", type=int, required=True)
     serve.add_argument("--agy-command", default=os.environ.get("BRIDGE_AGY_COMMAND", "agy"))
     serve.add_argument("--agy-mode", choices=["cli", "sdk"], default="cli")
@@ -57,13 +57,13 @@ def main() -> None:
     if args.agent == "profile":
         if args.profile is None:
             parser.error("serve profile requires --profile JSON_PATH")
-        profile = AgentProfile.from_file(args.profile)
+        profile = AgentProfile.from_file(args.profile, workspace_override=args.workspace)
         backend, info_provider = build_profile(profile)
         name = profile.id
     else:
         if args.profile is not None:
             parser.error("--profile is only valid with serve profile")
-        workspace = args.workspace.resolve(strict=True)
+        workspace = (args.workspace or Path.cwd()).resolve(strict=True)
         if not workspace.is_dir():
             parser.error("--workspace must be a directory")
         name = args.agent

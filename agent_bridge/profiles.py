@@ -51,11 +51,17 @@ class AgentProfile:
     turn_timeout_seconds: float = 1800
 
     @classmethod
-    def from_file(cls, path: Path) -> "AgentProfile":
+    def from_file(
+        cls, path: Path, *, workspace_override: Path | None = None,
+    ) -> "AgentProfile":
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("Agent profile must be a JSON object")
-        if "workspace" in data and not Path(data["workspace"]).is_absolute():
+        if workspace_override is not None:
+            data["workspace"] = str(workspace_override)
+        elif "workspace" not in data:
+            data["workspace"] = str(path.resolve().parent)
+        elif not Path(data["workspace"]).is_absolute():
             data["workspace"] = str(path.resolve().parent / data["workspace"])
         return cls.from_mapping(data)
 

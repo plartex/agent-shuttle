@@ -10,14 +10,28 @@
 - Отдельный интерфейс моделей, reasoning effort и текущих квот аккаунта.
 - Основной режим использует вход в аккаунты Codex и Antigravity, а не ключи LLM API.
 
+## Использование в другом проекте
+
+Установите Agent Bridge в Python-окружение проекта из исходного репозитория или wheel-файла. После установки исходный checkout не требуется: CLI и Python API импортируются из окружения проекта. Например, в PowerShell из каталога своего проекта:
+
+```powershell
+python -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install 'C:\path\to\agent-bridge'
+& .\.venv\Scripts\agent-bridge.exe serve codex --workspace . --port 8765
+```
+
+Для Antigravity используйте `serve antigravity --workspace . --port 8766`. Для OpenCode и Claude Code создайте профиль по [примерам](examples), затем запустите `serve profile --profile <путь-к-JSON> --workspace . --port <порт>`. Параметр `--workspace` задаёт рабочий каталог агента и перекрывает `workspace` из профиля. Если его не передать, относительный путь внутри JSON считается от каталога профиля. ID модели и доступные политики инструментов задаются профилем; сервер слушает только `127.0.0.1`.
+
+Для приложения-клиента достаточно `BridgeClient().info(url)` и `BridgeClient().ask(url, prompt, model=...)`. Agent Bridge не содержит правил code smells и может использоваться отдельно от чекера.
+
 ## Профили OpenCode и Claude Code
 
 Новые runtime подключаются через серверный JSON-профиль, а не через отдельный класс для каждого поставщика модели. Установите OpenCode либо Claude Code и запустите Ollama с моделью, указанной в профиле. Примеры [OpenCode](examples/opencode-ollama.json) и [Claude Code](examples/claude-code-ollama.json) используют `qwen3.5:9b`; замените ID на свою установленную модель. Относительный `workspace` считается от каталога JSON-файла.
 
 ```powershell
 # Два независимых локальных A2A-сервера; запускать в разных терминалах:
-& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\opencode-ollama.json --port 8767
-& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\claude-code-ollama.json --port 8768
+& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
+& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\claude-code-ollama.json --workspace . --port 8768
 
 # Отправка задачи в любой из них:
 & .\.venv\Scripts\agent-bridge.exe ask http://127.0.0.1:8767 "Ответь одним словом: OK" --model qwen3.5:9b --reasoning-effort none --tool-policy no_tools
