@@ -1,0 +1,153 @@
+"""Reusable lifecycle for an existing or temporarily launched local Bridge peer."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
+import sys
+import tempfile
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import AsyncIterator
+from urllib.parse import urlparse
+
+from .client import BridgeClient
+from .discovery import discover_harnesses
+
+
+_BACKENDS = {
+    "codex": {"codex_app_server"},
+    "antigravity": {"agy_cli", "antigravity_sdk"},
+    "opencode": {"opencode"},
+    "claude_code": {"claude_code"},
+}
+
+
+@dataclass(frozen=True)
+class HarnessLaunch:
+    """How to connect to a Bridge peer, starting one only when needed.
+
+    ``profile_path`` selects a user-owned OpenCode/Claude Code profile. Without
+    one, those runtimes receive a temporary no-tools Ollama profile for ``model``.
+    ``start_if_missing=False`` is appropriate for an explicitly supplied URL.
+    """
+
+    name: str
+    url: str
+    workspace: Path
+    model: str | None = None
+    command: str | None = None
+    profile_path: Path | None = None
+    ollama_url: str = "http://127.0.0.1:11434"
+    log_path: Path | None = None
+    start_if_missing: bool = True
+
+
+@dataclass(frozen=True)
+class BridgeConnection:
+    url: str
+    started: bool
+    log_path: Path | None = None
+
+
+def _verify_backend(name: str, url: str, info: dict) -> None:
+    backend = info.get("backend")
+    if backend not in _BACKENDS[name]:
+        raise ValueError(f"{url} serves backend {backend!r}, not {name!r}")
+
+
+def _local_port(url: str) -> int:
+    parsed = urlparse(url)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("Temporary Bridge servers require an HTTP loopback URL")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Temporary Bridge URL has an invalid port") from exc
+    if port is None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("Temporary Bridge URL must contain only a host and port")
+    return port
+
+
+@asynccontextmanager
+async def connect_harness(
+    launch: HarnessLaunch, *, client: BridgeClient | None = None,
+) -> AsyncIterator[BridgeConnection]:
+    """Reuse a matching peer or supervise a temporary one for the context."""
+    if launch.name not in _BACKENDS:
+        raise ValueError(f"Unknown harness {launch.name!r}")
+    client = client or BridgeClient()
+    try:
+        _verify_backend(launch.name, launch.url, await client.capabilities(launch.url))
+    except ValueError:
+        raise
+    except Exception as exc:
+        if not launch.start_if_missing:
+            raise RuntimeError(f"Bridge at {launch.url} is unavailable: {exc}") from exc
+    else:
+        yield BridgeConnection(launch.url, started=False)
+        return
+
+    port = _local_port(launch.url)
+    workspace = launch.workspace.resolve(strict=True)
+    if not workspace.is_dir():
+        raise ValueError("workspace must be a directory")
+    profile_path = launch.profile_path.resolve(strict=True) if launch.profile_path else None
+    if profile_path is not None and launch.name not in {"opencode", "claude_code"}:
+        raise ValueError("Profiles are supported only for OpenCode and Claude Code")
+    command = launch.command or discover_harnesses().get(launch.name)
+    if command is None and profile_path is None:
+        raise RuntimeError(f"{launch.name} is not installed; provide command or a running Bridge URL")
+
+    with tempfile.TemporaryDirectory(prefix="agent-bridge-") as temporary:
+        if launch.name in {"opencode", "claude_code"} and profile_path is None:
+            if not launch.model:
+                raise ValueError("model is required for a temporary Ollama profile")
+            profile_path = Path(temporary) / "profile.json"
+            profile = {
+                "id": launch.name, "runtime": launch.name, "provider": "ollama",
+                "workspace": str(workspace), "endpoint": launch.ollama_url,
+                "default_model": launch.model, "allowed_models": [launch.model],
+                "runtime_command": command, "max_tool_policy": "no_tools",
+            }
+            if launch.name == "opencode":
+                profile["reasoning_efforts"] = ["none"]
+            profile_path.write_text(json.dumps(profile), encoding="utf-8")
+        argv = [sys.executable, "-m", "agent_bridge.cli", "serve",
+                "profile" if profile_path else launch.name,
+                "--port", str(port), "--workspace", str(workspace)]
+        if profile_path:
+            argv.extend(["--profile", str(profile_path)])
+        if launch.name == "antigravity":
+            argv.extend(["--agy-command", command])
+        log_path = launch.log_path or Path(temporary) / "bridge.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w", encoding="utf-8") as log:
+            process = subprocess.Popen(argv, cwd=workspace, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                for _ in range(60):
+                    if process.poll() is not None:
+                        raise RuntimeError(
+                            f"{launch.name} Bridge exited ({process.returncode}); see {log_path}"
+                        )
+                    try:
+                        _verify_backend(launch.name, launch.url,
+                                        await client.capabilities(launch.url))
+                        break
+                    except ValueError:
+                        raise
+                    except Exception:
+                        await asyncio.sleep(0.5)
+                else:
+                    raise TimeoutError(f"{launch.name} Bridge did not start; see {log_path}")
+                yield BridgeConnection(launch.url, started=True, log_path=log_path)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        await asyncio.to_thread(process.wait, timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        await asyncio.to_thread(process.wait)

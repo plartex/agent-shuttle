@@ -2,6 +2,7 @@
 
 from .client import BridgeClient, BridgeResult, BridgeSession
 from .discovery import discover_harnesses
+from .managed import BridgeConnection, HarnessLaunch, connect_harness
 from .profiles import AgentProfile, ToolPolicy
 from .registry import build_profile
 
@@ -10,6 +11,9 @@ __all__ = [
     "BridgeResult",
     "BridgeSession",
     "discover_harnesses",
+    "BridgeConnection",
+    "HarnessLaunch",
+    "connect_harness",
     "AgentProfile",
     "ToolPolicy",
     "build_profile",
