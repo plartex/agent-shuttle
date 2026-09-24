@@ -24,7 +24,7 @@ python -m venv .venv
 
 Для приложения-клиента достаточно `BridgeClient().info(url)` и `BridgeClient().ask(url, prompt, model=...)`. Agent Bridge не содержит правил code smells и может использоваться отдельно от чекера.
 
-`agent-bridge discover` (или `discover_harnesses()` в Python) показывает доступные локальные харнессы без запуска серверов и моделей. Поиск проверяет `PATH` и типовые пользовательские каталоги установки на Windows. Пути можно переопределить флагами `--agy-command`, `--opencode-command`, `--claude-command` или аргументом `discover_harnesses({"opencode": "C:/tools/opencode.exe"})`. Обнаружение не означает, что Ollama уже запущена или нужная модель загружена.
+`agent-bridge discover` (или `discover_harnesses()` в Python) показывает доступные локальные харнессы без запуска серверов и моделей. Поиск проверяет `PATH` и типовые пользовательские каталоги установки на Windows; для `agy.exe` также учитываются `BRIDGE_AGY_COMMAND`, `%LOCALAPPDATA%\agy\bin` и `bin` рядом с исходным checkout Agent Bridge. Пути можно переопределить флагами `--agy-command`, `--opencode-command`, `--claude-command` или аргументом `discover_harnesses({"opencode": "C:/tools/opencode.exe"})`. Обнаружение не означает, что Ollama уже запущена или нужная модель загружена.
 
 ## Профили OpenCode и Claude Code
 

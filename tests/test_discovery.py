@@ -1,7 +1,10 @@
 import unittest
+import os
+from pathlib import Path
 from unittest.mock import patch
 
 from agent_bridge import discover_harnesses
+from agent_bridge import discovery
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -33,3 +36,21 @@ class DiscoveryTests(unittest.TestCase):
              patch("agent_bridge.discovery.Path.is_file", side_effect=PermissionError("denied")), \
              patch("agent_bridge.discovery.importlib.util.find_spec", return_value=object()):
             self.assertEqual(discover_harnesses(), {"codex": "agent-bridge"})
+
+    def test_antigravity_is_found_in_source_checkout_bin(self):
+        bundled = Path(discovery.__file__).resolve().parent.parent / "bin" / "agy.exe"
+        with patch.dict(os.environ, {"BRIDGE_AGY_COMMAND": ""}), \
+             patch("agent_bridge.discovery.shutil.which", return_value=None), \
+             patch("agent_bridge.discovery._is_file", side_effect=lambda path: path == bundled), \
+             patch("agent_bridge.discovery.importlib.util.find_spec", return_value=None):
+            found = discover_harnesses()
+        self.assertEqual(found["antigravity"], str(bundled))
+
+    def test_antigravity_respects_command_environment_override(self):
+        command = "C:/manual/agy.exe"
+        with patch.dict(os.environ, {"BRIDGE_AGY_COMMAND": command}), \
+             patch("agent_bridge.discovery.shutil.which", return_value=None), \
+             patch("agent_bridge.discovery._is_file", side_effect=lambda path: path == Path(command)), \
+             patch("agent_bridge.discovery.importlib.util.find_spec", return_value=None):
+            found = discover_harnesses()
+        self.assertEqual(Path(found["antigravity"]), Path(command))
