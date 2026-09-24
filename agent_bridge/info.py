@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from enum import Enum
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,17 @@ def _utc_now() -> str:
 
 def _enum_value(value):
     return getattr(value, "value", value)
+
+
+def _json_ready(value):
+    """Normalize SDK enums nested in typed App Server response dumps."""
+    if isinstance(value, Enum):
+        return _json_ready(value.value)
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
 
 
 class InfoProvider(Protocol):
@@ -209,4 +221,4 @@ class CodexInfo:
                     ),
                     "groups": groups,
                 }
-        return data
+        return _json_ready(data)

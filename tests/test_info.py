@@ -6,6 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from openai_codex.generated.v2_all import RateLimitResetType
+from starlette.responses import JSONResponse
+
 from agent_bridge.info import AntigravityCliInfo, AntigravitySdkInfo, CodexInfo
 
 
@@ -70,6 +73,10 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
 
 class CodexInfoTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_catalog_and_rate_limits(self):
+        class ResetCredits:
+            def model_dump(self, **kwargs):
+                return {"resetType": RateLimitResetType.codex_rate_limits, "remaining": 1}
+
         model = SimpleNamespace(
             model="test-model", id="test-id", display_name="Test", is_default=True,
             default_reasoning_effort="medium",
@@ -80,9 +87,10 @@ class CodexInfoTests(unittest.IsolatedAsyncioTestCase):
                 if method == "config/read":
                     return SimpleNamespace(config=SimpleNamespace(model="test-model", model_reasoning_effort="high"))
                 return SimpleNamespace(
-                    ordinary_usage_allowed=True, rate_limit_reset_credits=None,
+                    ordinary_usage_allowed=True, rate_limit_reset_credits=ResetCredits(),
                     rate_limits_by_limit_id={"core": {
                         "limitName": "Core", "normalModelSlug": "test-model", "planType": "pro",
+                        "rateLimitReachedType": RateLimitResetType.codex_rate_limits,
                         "primary": {"usedPercent": 20, "resetsAt": 1760000000, "windowDurationMins": 300},
                         "secondary": None,
                     }},
@@ -107,6 +115,10 @@ class CodexInfoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["capabilities"]["selected_effort"], "high")
         self.assertEqual(result["capabilities"]["models"][0]["efforts"], ["high"])
         self.assertEqual(result["usage"]["groups"][0]["buckets"][0]["remaining_percent"], 80)
+        self.assertEqual(result["usage"]["rate_limit_reset_credits"]["resetType"], "codexRateLimits")
+        self.assertEqual(result["usage"]["groups"][0]["rate_limit_reached_type"], "codexRateLimits")
+        json.dumps(result)
+        self.assertEqual(JSONResponse(result).status_code, 200)
 
 
 if __name__ == "__main__":
