@@ -31,14 +31,17 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
         result["codex"] = "agent-bridge"
     for name, default in (("antigravity", "agy"), ("opencode", "opencode"),
                           ("claude_code", "claude")):
-        command = overrides.get(name, default)
+        environment_command = os.environ.get("BRIDGE_AGY_COMMAND") if name == "antigravity" else None
+        command = overrides.get(name) or environment_command or default
         found = shutil.which(command)
         if found is None and _is_file(Path(command)):
             found = str(Path(command).resolve())
-        if found is None and name not in overrides:
+        if found is None and name not in overrides and not environment_command:
             home = Path.home()
             candidates = {
-                "antigravity": [home / ".local" / "bin" / "agy.exe"],
+                "antigravity": [home / ".local" / "bin" / "agy.exe",
+                                Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe",
+                                Path(__file__).resolve().parent.parent / "bin" / "agy.exe"],
                 "opencode": [Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" /
                              "opencode-ai" / "bin" / "opencode.exe",
                              home / ".local" / "bin" / "opencode.exe"],
