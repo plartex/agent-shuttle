@@ -26,6 +26,8 @@ python -m venv .venv
 
 `agent-bridge discover` (или `discover_harnesses()` в Python) показывает доступные локальные харнессы без запуска серверов и моделей. Поиск проверяет `PATH` и типовые пользовательские каталоги установки на Windows; для `agy.exe` также учитываются `BRIDGE_AGY_COMMAND`, `%LOCALAPPDATA%\agy\bin` и `bin` рядом с исходным checkout Agent Bridge. Пути можно переопределить флагами `--agy-command`, `--opencode-command`, `--claude-command` или аргументом `discover_harnesses({"opencode": "C:/tools/opencode.exe"})`. Обнаружение не означает, что Ollama уже запущена или нужная модель загружена.
 
+Для приложения, которому нужен сервер только на время работы, есть `async with connect_harness(HarnessLaunch(name="codex", url="http://127.0.0.1:8765", workspace=Path.cwd())) as peer`. API повторно использует подходящий работающий Bridge либо запускает временный, проверяет backend и останавливает запущенный им процесс при выходе. `start_if_missing=False` требует уже работающий сервер; `command`, `profile_path`, `model`, `ollama_url` и `log_path` настраивают запуск. Сам Bridge не задаёт промпты и не запускает проверку качества кода — это делает приложение-клиент.
+
 ## Профили OpenCode и Claude Code
 
 Новые runtime подключаются через серверный JSON-профиль, а не через отдельный класс для каждого поставщика модели. Установите OpenCode либо Claude Code и запустите Ollama с моделью, указанной в профиле. Примеры [OpenCode](examples/opencode-ollama.json) и [Claude Code](examples/claude-code-ollama.json) используют `qwen3.5:9b`; замените ID на свою установленную модель. Относительный `workspace` считается от каталога JSON-файла.

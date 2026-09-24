@@ -1,0 +1,109 @@
+"""Lifecycle contracts for the reusable Bridge server manager."""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from agent_bridge import HarnessLaunch, connect_harness
+
+
+class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reuses_matching_server_without_starting_process(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={"backend": "codex_app_server"}))
+            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+                async with connect_harness(launch, client=client) as connection:
+                    self.assertFalse(connection.started)
+                    self.assertEqual(connection.url, launch.url)
+            popen.assert_not_called()
+
+    async def test_starts_profile_server_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "opencode", "http://127.0.0.1:8767", root, model="qwen3.5:9b",
+                command="C:/tools/opencode.exe", log_path=root / "bridge.log",
+            )
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "opencode"},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client) as connection:
+                    self.assertTrue(connection.started)
+                    self.assertEqual(connection.log_path, launch.log_path)
+                    argv = popen.call_args.args[0]
+                    profile = json.loads(Path(argv[argv.index("--profile") + 1]).read_text())
+                    self.assertEqual(profile["runtime_command"], launch.command)
+                    self.assertEqual(profile["default_model"], launch.model)
+            process.terminate.assert_called_once()
+            process.wait.assert_called_once()
+
+    async def test_explicit_server_must_be_available(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
+                                   start_if_missing=False)
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=OSError("offline")))
+            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    async with connect_harness(launch, client=client):
+                        pass
+            popen.assert_not_called()
+
+    async def test_existing_profile_is_used_without_generating_ollama_config(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            profile = root / "cloud-profile.json"
+            profile.write_text('{"id":"custom"}', encoding="utf-8")
+            launch = HarnessLaunch("claude_code", "http://127.0.0.1:8768", root,
+                                   profile_path=profile, log_path=root / "bridge.log")
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "claude_code"},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    argv = popen.call_args.args[0]
+                    self.assertEqual(Path(argv[argv.index("--profile") + 1]), profile)
+            process.terminate.assert_called_once()
+
+    async def test_started_server_stops_after_caller_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
+                                   command="agent-bridge")
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "codex_app_server"},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                with self.assertRaisesRegex(RuntimeError, "caller failed"):
+                    async with connect_harness(launch, client=client):
+                        raise RuntimeError("caller failed")
+            popen.assert_called_once()
+            process.terminate.assert_called_once()
+
+    async def test_wrong_backend_is_not_silently_reused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={"backend": "opencode"}))
+            with self.assertRaisesRegex(ValueError, "opencode"):
+                async with connect_harness(launch, client=client):
+                    pass
+
+    async def test_nonlocal_launch_url_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "https://example.org:8765", Path(folder))
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=OSError("offline")))
+            with self.assertRaisesRegex(ValueError, "loopback"):
+                async with connect_harness(launch, client=client):
+                    pass
