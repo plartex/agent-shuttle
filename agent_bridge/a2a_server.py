@@ -21,7 +21,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .backends import Backend, BackendResponse, BackendSession, CodexBackend
+from .backends import AntigravityCliBackend, Backend, BackendResponse, BackendSession, CodexBackend
 from .info import InfoProvider
 from .profiled import ProfiledBackend
 from .profiles import ToolPolicy
@@ -285,6 +285,10 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                 or isinstance(backend, ProfiledBackend)
                 and backend.profile.max_tool_policy in {ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE}
             )
+            if isinstance(backend, AntigravityCliBackend):
+                result["agy_permission_mode"] = (
+                    "all" if backend.dangerously_skip_permissions else "settings"
+                )
         return JSONResponse(result)
 
     async def close_session(request):

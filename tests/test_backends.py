@@ -28,6 +28,24 @@ class AntigravityCliBackendTests(unittest.TestCase):
                 'Tool "ViewFile" requires confirmation',
             )
 
+    def test_rejects_partial_success_when_command_was_denied(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "RunCommand"):
+            self.decode({
+                "status": "SUCCESS", "response": "Partial work completed",
+                "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            })
+
+    def test_rejects_empty_success_with_structured_denial(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "ViewFile"):
+            self.decode({
+                "status": "SUCCESS", "response": "",
+                "denied_actions": [{"action": "read_file", "display_name": "ViewFile"}],
+            })
+
+    def test_full_permissions_setting_requires_boolean(self) -> None:
+        with self.assertRaisesRegex(TypeError, "boolean"):
+            AntigravityCliBackend(Path.cwd(), dangerously_skip_permissions="false")
+
     def test_rejects_invalid_json_with_stderr_context(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "invalid JSON.*backend unavailable"):
             _decode_agy_result(b"not-json", b"backend unavailable")
@@ -91,6 +109,27 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
                     await backend.open_session(read_only=True)
             spawn.assert_not_called()
 
+    async def test_unenforceable_tool_policies_are_rejected_before_starting_cli(self):
+        with tempfile.TemporaryDirectory() as folder:
+            backend = AntigravityCliBackend(Path(folder))
+            with patch("agent_bridge.backends.asyncio.create_subprocess_exec") as spawn:
+                for policy in ("no_tools", "read_only", "workspace_write"):
+                    with self.subTest(policy=policy), self.assertRaisesRegex(ValueError, policy):
+                        await backend.run("inspect", tool_policy=policy)
+                    with self.subTest(policy=policy), self.assertRaisesRegex(ValueError, policy):
+                        await backend.open_session(tool_policy=policy)
+            spawn.assert_not_called()
+
+    async def test_stream_all_permissions_requires_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process = _FakeProcess([])
+            with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
+                session = await AntigravityCliBackend(
+                    Path(folder), dangerously_skip_permissions=True,
+                ).open_session()
+                self.assertIn("--dangerously-skip-permissions", spawn.call_args.args)
+                await session.close()
+
     async def test_stream_turns_and_cumulative_usage_deltas(self):
         process = _FakeProcess([
             {"event": "init", "conversation_id": "test"},
@@ -119,6 +158,18 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(process.stdin.lines[1])["message"]["content"], "two")
         await session.close()
         self.assertTrue(process.stdin.closed)
+
+    async def test_stream_rejects_partial_success_when_command_was_denied(self):
+        process = _FakeProcess([{"event": "result", "result": {
+            "status": "SUCCESS", "response": "Partial work completed",
+            "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+        }}])
+        session = _AntigravityCliSession(process)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "RunCommand"):
+                await session.ask("do the full task")
+        finally:
+            await session.close()
 
 
 class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -221,6 +272,20 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.usage["input_tokens"], 10)
         self.assertIn("--model", spawn.call_args.args)
         self.assertIn("--effort", spawn.call_args.args)
+        self.assertNotIn("--dangerously-skip-permissions", spawn.call_args.args)
+
+    async def test_antigravity_cli_all_permissions_requires_explicit_opt_in(self):
+        class Process:
+            returncode = 0
+
+            async def communicate(self):
+                return b'{"status":"SUCCESS","response":"ok"}', b""
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
+            await AntigravityCliBackend(
+                Path.cwd(), dangerously_skip_permissions=True,
+            ).run("hello")
+        self.assertIn("--dangerously-skip-permissions", spawn.call_args.args)
 
     async def test_antigravity_cli_nonzero_reports_stderr(self):
         class Process:

@@ -12,7 +12,9 @@ from a2a.helpers import new_text_message
 from a2a.types import Role, SendMessageRequest, TaskState
 
 from agent_bridge.a2a_server import make_app
-from agent_bridge.backends import BackendResponse, CodexBackend, AntigravityCliBackend
+from agent_bridge.backends import (
+    AntigravityCliBackend, AntigravityPermissionDenied, BackendResponse, CodexBackend,
+)
 from agent_bridge.client import BridgeClient
 from agent_bridge.profiled import ProfiledBackend
 from agent_bridge.profiles import AgentProfile
@@ -100,6 +102,52 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["workspace"], str(Path(folder).resolve()))
                 self.assertIs(response.json()["read_only_tools"], supported)
+                if isinstance(backend, AntigravityCliBackend):
+                    self.assertEqual(response.json()["agy_permission_mode"], "settings")
+
+            app = make_app(
+                "antigravity",
+                AntigravityCliBackend(Path(folder), dangerously_skip_permissions=True),
+                "http://127.0.0.1:8766", EchoInfo(),
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test",
+            ) as http:
+                response = await http.get("/bridge/capabilities")
+            self.assertEqual(response.json()["agy_permission_mode"], "all")
+
+    async def test_permission_denial_is_failed_task_without_success_artifact(self):
+        class DeniedBackend(EchoBackend):
+            async def run(self, *args, **kwargs):
+                raise AntigravityPermissionDenied("agy denied a required tool (RunCommand)")
+
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        url = f"http://127.0.0.1:{port}"
+        server = uvicorn.Server(uvicorn.Config(
+            make_app("antigravity", DeniedBackend(), url),
+            host="127.0.0.1", port=port, log_level="error",
+        ))
+        running = asyncio.create_task(server.serve())
+        try:
+            async with httpx.AsyncClient() as http:
+                for _ in range(100):
+                    try:
+                        if (await http.get(url + "/.well-known/agent-card.json")).status_code == 200:
+                            break
+                    except httpx.ConnectError:
+                        pass
+                    await asyncio.sleep(0.03)
+                else:
+                    self.fail("A2A server did not start")
+            result = await BridgeClient().ask(url, "do the full task")
+            self.assertEqual(result.state, "TASK_STATE_FAILED")
+            self.assertIn("RunCommand", result.text)
+            self.assertIsNone(result.usage)
+        finally:
+            server.should_exit = True
+            await running
 
     async def test_a2a_rejects_malformed_request_metadata(self):
         with socket.socket() as listener:

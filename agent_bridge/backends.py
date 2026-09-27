@@ -10,6 +10,30 @@ from pathlib import Path
 from typing import Protocol
 
 
+class AntigravityPermissionDenied(RuntimeError):
+    """The CLI completed a turn without permission for a requested tool."""
+
+
+def _check_agy_denials(result: dict) -> None:
+    denied = result.get("denied_actions")
+    if not denied:
+        return
+    actions = denied if isinstance(denied, list) else [denied]
+    labels = []
+    for action in actions:
+        if isinstance(action, dict):
+            label = action.get("display_name") or action.get("action")
+        else:
+            label = None
+        if isinstance(label, str) and label.strip():
+            labels.append(label.strip()[:100])
+    names = ", ".join(labels) if labels else "an unnamed tool"
+    raise AntigravityPermissionDenied(
+        f"agy denied a required tool ({names}); the result may be incomplete. "
+        "Review scoped permissions.allow rules in Antigravity CLI settings."
+    )
+
+
 def _decode_agy_result(stdout: bytes, stderr: bytes) -> str:
     """Validate headless CLI output, including its exit-zero soft-denial case."""
     try:
@@ -19,6 +43,7 @@ def _decode_agy_result(stdout: bytes, stderr: bytes) -> str:
         raise RuntimeError(f"agy returned invalid JSON: {detail or exc}") from exc
     if result.get("status") != "SUCCESS":
         raise RuntimeError(str(result.get("error") or result.get("status") or "agy failed"))
+    _check_agy_denials(result)
     response = result.get("response")
     if not isinstance(response, str) or not response.strip():
         detail = stderr.decode(errors="replace")[-4000:].strip()
@@ -168,9 +193,15 @@ class _CodexSession:
 class AntigravityCliBackend:
     """Run the official `agy` headless CLI with its configured sign-in."""
 
-    def __init__(self, workspace: Path, command: str = "agy"):
+    def __init__(
+        self, workspace: Path, command: str = "agy", *,
+        dangerously_skip_permissions: bool = False,
+    ):
+        if not isinstance(dangerously_skip_permissions, bool):
+            raise TypeError("dangerously_skip_permissions must be a boolean")
         self.workspace = workspace.resolve(strict=True)
         self.command = command
+        self.dangerously_skip_permissions = dangerously_skip_permissions
 
     async def run(
         self,
@@ -179,10 +210,15 @@ class AntigravityCliBackend:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
+        tool_policy: str | None = None,
     ) -> BackendResponse:
         if read_only:
             raise ValueError("Antigravity CLI cannot enforce read-only tools in headless mode")
+        if tool_policy is not None:
+            raise ValueError(f"Antigravity CLI cannot enforce {tool_policy}")
         command = [self.command, "-p", prompt, "--output-format", "json"]
+        if self.dangerously_skip_permissions:
+            command.append("--dangerously-skip-permissions")
         if model:
             command.extend(["--model", model])
         if reasoning_effort:
@@ -213,10 +249,15 @@ class AntigravityCliBackend:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
+        tool_policy: str | None = None,
     ) -> BackendSession:
         if read_only:
             raise ValueError("Antigravity CLI cannot enforce read-only tools in headless mode")
+        if tool_policy is not None:
+            raise ValueError(f"Antigravity CLI cannot enforce {tool_policy}")
         command = [self.command, "--input-format", "stream-json", "--output-format", "stream-json", "--print-timeout", "30m"]
+        if self.dangerously_skip_permissions:
+            command.append("--dangerously-skip-permissions")
         if model:
             command.extend(["--model", model])
         if reasoning_effort:
@@ -261,6 +302,7 @@ class _AntigravityCliSession:
             result = payload.get("result") or {}
             if result.get("status") != "SUCCESS":
                 raise RuntimeError(str(result.get("error") or result.get("status") or "agy session failed"))
+            _check_agy_denials(result)
             response = result.get("response")
             if not isinstance(response, str) or not response.strip():
                 raise RuntimeError(

@@ -175,3 +175,75 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "loopback"):
                 async with connect_harness(launch, client=client):
                     pass
+
+    async def test_antigravity_full_permissions_passed_only_when_requested(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "antigravity", "http://127.0.0.1:8766", root,
+                command="C:/tools/agy.exe", log_path=root / "bridge.log",
+                agy_dangerously_skip_permissions=True,
+            )
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
+                                    "read_only_tools": False, "agy_permission_mode": "all"},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    self.assertIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
+
+    async def test_antigravity_default_starts_with_settings_permissions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "antigravity", "http://127.0.0.1:8766", root,
+                command="C:/tools/agy.exe", log_path=root / "bridge.log",
+            )
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
+                                    "read_only_tools": False, "agy_permission_mode": "settings"},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    self.assertNotIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
+
+    async def test_antigravity_permission_mode_mismatch_prevents_reuse(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "antigravity", "http://127.0.0.1:8766", root,
+                agy_dangerously_skip_permissions=False,
+            )
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={
+                "backend": "agy_cli", "workspace": str(root.resolve()),
+                "agy_permission_mode": "all",
+            }))
+            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(ValueError, "permission mode"):
+                    async with connect_harness(launch, client=client):
+                        pass
+            popen.assert_not_called()
+
+    async def test_antigravity_all_permissions_rejects_nonboolean_and_read_only(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            client = SimpleNamespace(capabilities=AsyncMock())
+            for launch, message in (
+                (HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
+                               agy_dangerously_skip_permissions="false"), "boolean"),
+                (HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
+                               tool_policy="read_only",
+                               agy_dangerously_skip_permissions=True), "read_only"),
+                (HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
+                               tool_policy="no_tools"), "no_tools"),
+            ):
+                with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                    async with connect_harness(launch, client=client):
+                        pass
+            client.capabilities.assert_not_called()
