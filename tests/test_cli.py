@@ -89,6 +89,26 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main()
 
+    def test_antigravity_full_permissions_are_explicit_server_opt_in(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("sys.argv", ["agent-bridge", "serve", "antigravity", "--port", "8766",
+                                "--workspace", folder, "--agy-dangerously-skip-permissions"]), \
+             patch("agent_bridge.cli.AntigravityCliBackend") as backend, \
+             patch("agent_bridge.cli.uvicorn.run") as run:
+            main()
+        self.assertTrue(run.call_args.args[0].routes)
+        self.assertTrue(backend.call_args.kwargs["dangerously_skip_permissions"])
+
+    def test_antigravity_full_permissions_flag_rejected_for_other_backends(self):
+        for agent, extra in (("codex", []), ("profile", []),
+                             ("antigravity", ["--agy-mode", "sdk"])):
+            with self.subTest(agent=agent, extra=extra), tempfile.TemporaryDirectory() as folder, \
+                 patch("sys.argv", ["agent-bridge", "serve", agent, "--port", "8765",
+                                    "--workspace", folder, *extra,
+                                    "--agy-dangerously-skip-permissions"]):
+                with self.assertRaises(SystemExit):
+                    main()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,6 +46,7 @@ class HarnessLaunch:
     log_path: Path | None = None
     start_if_missing: bool = True
     tool_policy: str | None = None
+    agy_dangerously_skip_permissions: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,10 @@ def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
         raise ValueError(f"{launch.url} workspace {actual} does not match {expected}")
     if launch.tool_policy == "read_only" and info.get("read_only_tools") is not True:
         raise ValueError(f"{launch.url} cannot confirm read-only tools")
+    if launch.name == "antigravity":
+        expected_mode = "all" if launch.agy_dangerously_skip_permissions else "settings"
+        if info.get("agy_permission_mode") != expected_mode:
+            raise ValueError(f"{launch.url} Antigravity permission mode does not match {expected_mode!r}")
 
 
 def _local_port(url: str) -> int:
@@ -99,6 +104,12 @@ async def connect_harness(
         raise ValueError(f"Unknown harness {launch.name!r}")
     if launch.tool_policy not in {None, "no_tools", "read_only"}:
         raise ValueError("Temporary harness tool_policy must be no_tools or read_only")
+    if not isinstance(launch.agy_dangerously_skip_permissions, bool):
+        raise ValueError("agy_dangerously_skip_permissions must be a boolean")
+    if launch.agy_dangerously_skip_permissions and launch.name != "antigravity":
+        raise ValueError("agy_dangerously_skip_permissions requires the antigravity harness")
+    if launch.name == "antigravity" and launch.tool_policy is not None:
+        raise ValueError(f"Antigravity CLI cannot enforce {launch.tool_policy}")
     client = client or BridgeClient()
     try:
         _verify_connection(launch, await client.capabilities(launch.url))
@@ -147,6 +158,8 @@ async def connect_harness(
             argv.extend(["--profile", str(profile_path)])
         if launch.name == "antigravity":
             argv.extend(["--agy-command", command])
+            if launch.agy_dangerously_skip_permissions:
+                argv.append("--agy-dangerously-skip-permissions")
         log_path = launch.log_path or Path(temporary) / "bridge.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", encoding="utf-8") as log:

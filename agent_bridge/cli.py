@@ -30,6 +30,10 @@ def main() -> None:
     serve.add_argument("--agy-command", default=os.environ.get("BRIDGE_AGY_COMMAND", "agy"))
     serve.add_argument("--agy-mode", choices=["cli", "sdk"], default="cli")
     serve.add_argument("--agy-python", type=Path)
+    serve.add_argument(
+        "--agy-dangerously-skip-permissions", action="store_true",
+        help="Antigravity CLI only: approve every tool call for this Bridge server",
+    )
     ask = sub.add_parser("ask", help="Send a text task to an A2A agent")
     ask.add_argument("url")
     ask.add_argument("prompt")
@@ -66,6 +70,8 @@ def main() -> None:
     if args.command == "info":
         print(json.dumps(asyncio.run(BridgeClient().info(args.url)), ensure_ascii=False, indent=2))
         return
+    if args.agy_dangerously_skip_permissions and (args.agent != "antigravity" or args.agy_mode != "cli"):
+        parser.error("--agy-dangerously-skip-permissions requires serve antigravity --agy-mode cli")
     if args.agent == "profile":
         if args.profile is None:
             parser.error("serve profile requires --profile JSON_PATH")
@@ -86,7 +92,10 @@ def main() -> None:
         backend = AntigravitySdkBackend(workspace, args.agy_python)
         info_provider = AntigravitySdkInfo()
     elif args.agent == "antigravity":
-        backend = AntigravityCliBackend(workspace, args.agy_command)
+        backend = AntigravityCliBackend(
+            workspace, args.agy_command,
+            dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
+        )
         info_provider = AntigravityCliInfo(workspace, args.agy_command)
     url = f"http://127.0.0.1:{args.port}"
     uvicorn.run(make_app(name, backend, url, info_provider), host="127.0.0.1", port=args.port)
