@@ -14,7 +14,10 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_reuses_matching_server_without_starting_process(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
-            client = SimpleNamespace(capabilities=AsyncMock(return_value={"backend": "codex_app_server"}))
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={
+                "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
+                "read_only_tools": True,
+            }))
             with patch("agent_bridge.managed.subprocess.Popen") as popen:
                 async with connect_harness(launch, client=client) as connection:
                     self.assertFalse(connection.started)
@@ -29,7 +32,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 command="C:/tools/opencode.exe", log_path=root / "bridge.log",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "opencode"},
+                OSError("offline"), {"backend": "opencode", "workspace": str(root.resolve()),
+                                    "read_only_tools": False},
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
@@ -64,7 +68,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             launch = HarnessLaunch("claude_code", "http://127.0.0.1:8768", root,
                                    profile_path=profile, log_path=root / "bridge.log")
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "claude_code"},
+                OSError("offline"), {"backend": "claude_code", "workspace": str(root.resolve()),
+                                    "read_only_tools": False},
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
@@ -80,7 +85,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
                                    command="agent-bridge")
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "codex_app_server"},
+                OSError("offline"), {"backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
+                                    "read_only_tools": True},
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
@@ -99,6 +105,68 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "opencode"):
                 async with connect_harness(launch, client=client):
                     pass
+
+    async def test_wrong_workspace_is_not_silently_reused(self):
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as other:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={
+                "backend": "codex_app_server", "workspace": str(Path(other).resolve()),
+                "read_only_tools": True,
+            }))
+            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(ValueError, "workspace"):
+                    async with connect_harness(launch, client=client):
+                        pass
+            popen.assert_not_called()
+
+    async def test_missing_workspace_is_not_silently_reused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={"backend": "codex_app_server"}))
+            with self.assertRaisesRegex(ValueError, "workspace"):
+                async with connect_harness(launch, client=client):
+                    pass
+
+    async def test_temp_profile_can_enable_read_only_without_write(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "opencode", "http://127.0.0.1:8767", root, model="qwen3.5:9b",
+                command="C:/tools/opencode.exe", tool_policy="read_only", log_path=root / "bridge.log",
+            )
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "opencode", "workspace": str(root.resolve()),
+                                    "read_only_tools": True},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    argv = popen.call_args.args[0]
+                    profile = json.loads(Path(argv[argv.index("--profile") + 1]).read_text())
+                    self.assertEqual(profile["max_tool_policy"], "read_only")
+                    self.assertNotEqual(profile["max_tool_policy"], "workspace_write")
+
+    async def test_existing_no_tools_profile_cannot_be_elevated(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            profile = root / "profile.json"
+            profile.write_text(json.dumps({
+                "id": "local", "runtime": "opencode", "provider": "ollama",
+                "workspace": str(root), "default_model": "test", "allowed_models": ["test"],
+                "max_tool_policy": "no_tools",
+            }), encoding="utf-8")
+            launch = HarnessLaunch(
+                "opencode", "http://127.0.0.1:8767", root,
+                profile_path=profile, tool_policy="read_only",
+            )
+            client = SimpleNamespace(capabilities=AsyncMock(side_effect=OSError("offline")))
+            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(ValueError, "exceeds profile maximum"):
+                    async with connect_harness(launch, client=client):
+                        pass
+            popen.assert_not_called()
 
     async def test_nonlocal_launch_url_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:

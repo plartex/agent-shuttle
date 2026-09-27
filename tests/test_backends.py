@@ -1,5 +1,6 @@
 import asyncio
 import json
+import tempfile
 import unittest
 import sys
 from pathlib import Path
@@ -80,6 +81,16 @@ class _FakeProcess:
 
 
 class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_read_only_is_rejected_before_starting_cli(self):
+        with tempfile.TemporaryDirectory() as folder:
+            backend = AntigravityCliBackend(Path(folder))
+            with patch("agent_bridge.backends.asyncio.create_subprocess_exec") as spawn:
+                with self.assertRaisesRegex(ValueError, "read-only"):
+                    await backend.run("inspect", read_only=True)
+                with self.assertRaisesRegex(ValueError, "read-only"):
+                    await backend.open_session(read_only=True)
+            spawn.assert_not_called()
+
     async def test_stream_turns_and_cumulative_usage_deltas(self):
         process = _FakeProcess([
             {"event": "init", "conversation_id": "test"},
@@ -204,7 +215,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
             response = await AntigravityCliBackend(Path.cwd()).run(
-                "hello", "chosen", reasoning_effort="high", read_only=True,
+                "hello", "chosen", reasoning_effort="high",
             )
         self.assertEqual(response.text, "ok")
         self.assertEqual(response.usage["input_tokens"], 10)

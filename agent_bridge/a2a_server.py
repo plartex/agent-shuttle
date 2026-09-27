@@ -7,6 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from time import monotonic
+from pathlib import Path
 
 from a2a.helpers import get_message_text, new_task_from_user_message, new_text_message, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -20,8 +21,9 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .backends import Backend, BackendResponse, BackendSession
+from .backends import Backend, BackendResponse, BackendSession, CodexBackend
 from .info import InfoProvider
+from .profiled import ProfiledBackend
 from .profiles import ToolPolicy
 
 
@@ -272,6 +274,17 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             result = await info_provider.fetch(capabilities=capabilities, usage=usage)
         except Exception as exc:
             return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=503)
+        if capabilities:
+            workspace = getattr(backend, "workspace", None)
+            if isinstance(backend, ProfiledBackend):
+                workspace = backend.profile.workspace
+            if isinstance(workspace, Path):
+                result["workspace"] = str(workspace.resolve(strict=True))
+            result["read_only_tools"] = (
+                isinstance(backend, CodexBackend)
+                or isinstance(backend, ProfiledBackend)
+                and backend.profile.max_tool_policy in {ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE}
+            )
         return JSONResponse(result)
 
     async def close_session(request):

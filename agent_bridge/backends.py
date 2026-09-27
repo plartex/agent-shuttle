@@ -180,6 +180,8 @@ class AntigravityCliBackend:
         reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> BackendResponse:
+        if read_only:
+            raise ValueError("Antigravity CLI cannot enforce read-only tools in headless mode")
         command = [self.command, "-p", prompt, "--output-format", "json"]
         if model:
             command.extend(["--model", model])
@@ -212,6 +214,8 @@ class AntigravityCliBackend:
         reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> BackendSession:
+        if read_only:
+            raise ValueError("Antigravity CLI cannot enforce read-only tools in headless mode")
         command = [self.command, "--input-format", "stream-json", "--output-format", "stream-json", "--print-timeout", "30m"]
         if model:
             command.extend(["--model", model])
@@ -305,6 +309,8 @@ class AntigravitySdkBackend:
         reasoning_effort: str | None = None,
         read_only: bool = False,
     ) -> str:
+        if read_only:
+            raise ValueError("Antigravity SDK cannot enforce read-only tools")
         if not self.python.is_file():
             raise RuntimeError(f"Antigravity Python environment missing: {self.python}")
         if reasoning_effort is not None:
