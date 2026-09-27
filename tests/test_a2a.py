@@ -1,7 +1,9 @@
 import asyncio
 import socket
+import tempfile
 import unittest
 import uuid
+from pathlib import Path
 
 import httpx
 import uvicorn
@@ -10,8 +12,10 @@ from a2a.helpers import new_text_message
 from a2a.types import Role, SendMessageRequest, TaskState
 
 from agent_bridge.a2a_server import make_app
-from agent_bridge.backends import BackendResponse
+from agent_bridge.backends import BackendResponse, CodexBackend, AntigravityCliBackend
 from agent_bridge.client import BridgeClient
+from agent_bridge.profiled import ProfiledBackend
+from agent_bridge.profiles import AgentProfile
 
 
 class EchoBackend:
@@ -76,6 +80,27 @@ class PolicyEchoBackend(EchoBackend):
 
 
 class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
+    async def test_capabilities_identify_workspace_and_read_only_tool_support(self):
+        with tempfile.TemporaryDirectory() as folder:
+            profile = AgentProfile.from_mapping({
+                "id": "local", "runtime": "opencode", "provider": "ollama",
+                "workspace": folder, "default_model": "test", "allowed_models": ["test"],
+                "max_tool_policy": "read_only",
+            })
+            for backend, supported in (
+                (CodexBackend(Path(folder)), True),
+                (AntigravityCliBackend(Path(folder)), False),
+                (ProfiledBackend(profile, object()), True),
+            ):
+                app = make_app("test", backend, "http://127.0.0.1:8765", EchoInfo())
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://test"
+                ) as http:
+                    response = await http.get("/bridge/capabilities")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["workspace"], str(Path(folder).resolve()))
+                self.assertIs(response.json()["read_only_tools"], supported)
+
     async def test_a2a_rejects_malformed_request_metadata(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))

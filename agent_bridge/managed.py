@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ from urllib.parse import urlparse
 
 from .client import BridgeClient
 from .discovery import discover_harnesses
+from .profiles import AgentProfile
 
 
 _BACKENDS = {
@@ -43,6 +45,7 @@ class HarnessLaunch:
     ollama_url: str = "http://127.0.0.1:11434"
     log_path: Path | None = None
     start_if_missing: bool = True
+    tool_policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,22 @@ def _verify_backend(name: str, url: str, info: dict) -> None:
     backend = info.get("backend")
     if backend not in _BACKENDS[name]:
         raise ValueError(f"{url} serves backend {backend!r}, not {name!r}")
+
+
+def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
+    _verify_backend(launch.name, launch.url, info)
+    expected = launch.workspace.resolve(strict=True)
+    reported = info.get("workspace")
+    if not isinstance(reported, str) or not Path(reported).is_absolute():
+        raise ValueError(f"{launch.url} did not report a valid workspace")
+    try:
+        actual = Path(reported).resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"{launch.url} reported an inaccessible workspace") from exc
+    if os.path.normcase(str(actual)) != os.path.normcase(str(expected)):
+        raise ValueError(f"{launch.url} workspace {actual} does not match {expected}")
+    if launch.tool_policy == "read_only" and info.get("read_only_tools") is not True:
+        raise ValueError(f"{launch.url} cannot confirm read-only tools")
 
 
 def _local_port(url: str) -> int:
@@ -78,9 +97,11 @@ async def connect_harness(
     """Reuse a matching peer or supervise a temporary one for the context."""
     if launch.name not in _BACKENDS:
         raise ValueError(f"Unknown harness {launch.name!r}")
+    if launch.tool_policy not in {None, "no_tools", "read_only"}:
+        raise ValueError("Temporary harness tool_policy must be no_tools or read_only")
     client = client or BridgeClient()
     try:
-        _verify_backend(launch.name, launch.url, await client.capabilities(launch.url))
+        _verify_connection(launch, await client.capabilities(launch.url))
     except ValueError:
         raise
     except Exception as exc:
@@ -97,6 +118,10 @@ async def connect_harness(
     profile_path = launch.profile_path.resolve(strict=True) if launch.profile_path else None
     if profile_path is not None and launch.name not in {"opencode", "claude_code"}:
         raise ValueError("Profiles are supported only for OpenCode and Claude Code")
+    if profile_path is not None and launch.tool_policy is not None:
+        AgentProfile.from_file(profile_path, workspace_override=workspace).resolve(
+            launch.model, None, launch.tool_policy,
+        )
     command = launch.command or discover_harnesses().get(launch.name)
     if command is None and profile_path is None:
         raise RuntimeError(f"{launch.name} is not installed; provide command or a running Bridge URL")
@@ -110,7 +135,7 @@ async def connect_harness(
                 "id": launch.name, "runtime": launch.name, "provider": "ollama",
                 "workspace": str(workspace), "endpoint": launch.ollama_url,
                 "default_model": launch.model, "allowed_models": [launch.model],
-                "runtime_command": command, "max_tool_policy": "no_tools",
+                "runtime_command": command, "max_tool_policy": launch.tool_policy or "no_tools",
             }
             if launch.name == "opencode":
                 profile["reasoning_efforts"] = ["none"]
@@ -127,21 +152,26 @@ async def connect_harness(
         with log_path.open("w", encoding="utf-8") as log:
             process = subprocess.Popen(argv, cwd=workspace, stdout=log, stderr=subprocess.STDOUT)
             try:
+                last_error: Exception | None = None
                 for _ in range(60):
                     if process.poll() is not None:
                         raise RuntimeError(
-                            f"{launch.name} Bridge exited ({process.returncode}); see {log_path}"
+                            f"{launch.name} Bridge exited ({process.returncode}); "
+                            f"log tail: {log_path.read_text(encoding='utf-8', errors='replace')[-2000:]}"
                         )
                     try:
-                        _verify_backend(launch.name, launch.url,
-                                        await client.capabilities(launch.url))
+                        _verify_connection(launch, await client.capabilities(launch.url))
                         break
                     except ValueError:
                         raise
-                    except Exception:
+                    except Exception as exc:
+                        last_error = exc
                         await asyncio.sleep(0.5)
                 else:
-                    raise TimeoutError(f"{launch.name} Bridge did not start; see {log_path}")
+                    tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
+                    raise TimeoutError(
+                        f"{launch.name} Bridge did not become ready: {last_error}; log tail: {tail}"
+                    )
                 yield BridgeConnection(launch.url, started=True, log_path=log_path)
             finally:
                 if process.poll() is None:
