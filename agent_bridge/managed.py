@@ -105,8 +105,8 @@ async def connect_harness(
     """Reuse a matching peer or supervise a temporary one for the context."""
     if launch.name not in _BACKENDS:
         raise ValueError(f"Unknown harness {launch.name!r}")
-    if launch.tool_policy not in {None, "no_tools", "read_only"}:
-        raise ValueError("Temporary harness tool_policy must be no_tools or read_only")
+    if launch.tool_policy not in {None, "no_tools", "read_only", "workspace_write", "full_access"}:
+        raise ValueError("Unknown temporary harness tool_policy")
     if not isinstance(launch.agy_dangerously_skip_permissions, bool):
         raise ValueError("agy_dangerously_skip_permissions must be a boolean")
     if launch.agy_dangerously_skip_permissions and launch.name != "antigravity":
@@ -118,8 +118,10 @@ async def connect_harness(
                 or isinstance(launch.agy_turn_timeout_seconds, bool)
                 or not 0 < launch.agy_turn_timeout_seconds < float("inf")):
             raise ValueError("agy_turn_timeout_seconds must be positive and finite")
-    if launch.name == "antigravity" and launch.tool_policy is not None:
+    if launch.name == "antigravity" and launch.tool_policy not in {None, "full_access"}:
         raise ValueError(f"Antigravity CLI cannot enforce {launch.tool_policy}")
+    if launch.name == "antigravity" and launch.tool_policy == "full_access" and not launch.agy_dangerously_skip_permissions:
+        raise ValueError("Antigravity full_access requires agy_dangerously_skip_permissions=True")
     client = client or BridgeClient()
     identify = getattr(client, "identity", None) or client.capabilities
     try:

@@ -11,6 +11,48 @@ from agent_bridge import HarnessLaunch, connect_harness
 
 
 class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_temp_ollama_profile_can_opt_into_full_access(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "opencode", "http://127.0.0.1:8767", root, model="qwen3.5:9b",
+                command="C:/tools/opencode.exe", tool_policy="full_access",
+                log_path=root / "bridge.log",
+            )
+            client = SimpleNamespace(identity=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "opencode", "workspace": str(root.resolve()),
+                                   "read_only_tools": True},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    argv = popen.call_args.args[0]
+                    profile = json.loads(Path(argv[argv.index("--profile") + 1]).read_text())
+                    self.assertEqual(profile["max_tool_policy"], "full_access")
+
+    async def test_antigravity_full_access_project_launch_sets_cli_flag(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "antigravity", "http://127.0.0.1:8766", root,
+                command="C:/tools/agy.exe", tool_policy="full_access",
+                agy_dangerously_skip_permissions=True,
+            )
+            client = SimpleNamespace(identity=AsyncMock(side_effect=[
+                OSError("offline"), {
+                    "backend": "agy_cli", "workspace": str(root.resolve()),
+                    "agy_permission_mode": "all", "agy_turn_timeout_seconds": 300,
+                },
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    self.assertIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
+
     async def test_reuse_checks_static_identity_without_fetching_models(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

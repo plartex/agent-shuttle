@@ -279,12 +279,16 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             )
             workspace = getattr(backend, "workspace", None)
         result = {"agent": name, "backend": backend_name}
+        if isinstance(backend, ProfiledBackend):
+            result["max_tool_policy"] = backend.profile.max_tool_policy.value
         if isinstance(workspace, Path):
             result["workspace"] = str(workspace.resolve(strict=True))
         result["read_only_tools"] = (
             isinstance(backend, CodexBackend)
             or isinstance(backend, ProfiledBackend)
-            and backend.profile.max_tool_policy in {ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE}
+            and backend.profile.max_tool_policy in {
+                ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS,
+            }
         )
         if isinstance(backend, AntigravityCliBackend):
             result["agy_permission_mode"] = (

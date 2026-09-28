@@ -104,7 +104,7 @@ class BridgeClient:
             try:
                 ToolPolicy(tool_policy)
             except ValueError as exc:
-                raise ValueError("tool_policy must be no_tools, read_only, or workspace_write") from exc
+                raise ValueError("tool_policy must be no_tools, read_only, workspace_write, or full_access") from exc
             if read_only and tool_policy != ToolPolicy.READ_ONLY.value:
                 raise ValueError("read_only conflicts with tool_policy")
         if session_id is not None:

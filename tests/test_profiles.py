@@ -9,6 +9,17 @@ from agent_bridge.profiles import AgentProfile, ToolPolicy
 
 
 class AgentProfileTests(unittest.TestCase):
+    def test_full_access_requires_profile_opt_in(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = {
+                "id": "local", "runtime": "opencode", "provider": "ollama",
+                "workspace": folder, "default_model": "test", "allowed_models": ["test"],
+            }
+            with self.assertRaisesRegex(ValueError, "exceeds profile maximum"):
+                AgentProfile.from_mapping(base).resolve(None, None, "full_access")
+            profile = AgentProfile.from_mapping({**base, "max_tool_policy": "full_access"})
+            self.assertEqual(profile.resolve(None, None, "full_access").tool_policy, ToolPolicy.FULL_ACCESS)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -206,6 +206,17 @@ class OpenCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OpenCodeConfigTests(unittest.TestCase):
+    def test_full_access_allows_all_tools_and_external_directories(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            profile = AgentProfile.from_mapping({
+                "id": "full", "runtime": "opencode", "provider": "ollama",
+                "workspace": workspace, "default_model": "test",
+                "allowed_models": ["test"], "max_tool_policy": "full_access",
+            })
+            config = json.loads(_inline_config(profile, ToolPolicy.FULL_ACCESS))
+            self.assertEqual(config["permission"], {"*": "allow"})
+            self.assertNotIn("read-only", config["agent"]["bridge"]["prompt"])
+
     def test_windows_npm_shim_resolves_real_executable(self):
         with tempfile.TemporaryDirectory() as folder:
             root = __import__("pathlib").Path(folder)

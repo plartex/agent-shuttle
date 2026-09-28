@@ -42,7 +42,9 @@ def _permissions(policy: ToolPolicy) -> dict:
         return {"*": "deny"}
     if policy is ToolPolicy.READ_ONLY:
         return {"*": "deny", **{tool: "allow" for tool in _READ_TOOLS}}
-    return {"*": "allow", "external_directory": "deny"}
+    if policy is ToolPolicy.WORKSPACE_WRITE:
+        return {"*": "allow", "external_directory": "deny"}
+    return {"*": "allow"}
 
 
 def _inline_config(profile: AgentProfile, policy: ToolPolicy) -> str:
@@ -56,6 +58,8 @@ def _inline_config(profile: AgentProfile, policy: ToolPolicy) -> str:
             if policy is ToolPolicy.NO_TOOLS else
             "You are a read-only analysis assistant. Use read and search tools only when needed. "
             "Never modify files or execute commands."
+            if policy is ToolPolicy.READ_ONLY else
+            "You are an analysis assistant. Follow the user's task and use tools when needed."
         ),
         "permission": permission,
     }
@@ -261,13 +265,13 @@ class OpenCodeSession:
             raise RuntimeError("OpenCode session is closed")
         provider, model = self.selection.model.split("/", 1)
         payload: dict = {
-            "agent": "build" if self.selection.tool_policy is ToolPolicy.WORKSPACE_WRITE else "bridge",
+            "agent": "build" if self.selection.tool_policy in {ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS} else "bridge",
             "model": {"providerID": provider, "modelID": model},
             "parts": [{"type": "text", "text": prompt}],
         }
         if self.selection.reasoning_effort is not None:
             payload["variant"] = self.selection.reasoning_effort
-        if self.selection.tool_policy is not ToolPolicy.WORKSPACE_WRITE:
+        if self.selection.tool_policy not in {ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS}:
             payload["tools"] = {
                 tool: self.selection.tool_policy is ToolPolicy.READ_ONLY and tool in _READ_TOOLS
                 for tool in _KNOWN_TOOLS

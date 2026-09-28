@@ -197,6 +197,29 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_access_session_uses_sdk_full_access_sandbox(self):
+        from openai_codex import Sandbox
+        started = []
+
+        class Codex:
+            def __init__(self, config):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def thread_start(self, **kwargs):
+                started.append(kwargs)
+                return object()
+
+        with patch("openai_codex.AsyncCodex", Codex):
+            session = await CodexBackend(Path.cwd()).open_session(tool_policy="full_access")
+            await session.close()
+        self.assertEqual(started[0]["sandbox"], Sandbox.full_access)
+
     async def test_reuses_one_thread_and_closes_runtime(self):
         runtimes = []
 
@@ -251,6 +274,32 @@ class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_full_access_maps_to_sdk_sandbox(self):
+        from openai_codex import Sandbox
+        instances = []
+
+        class Thread:
+            async def run(self, prompt):
+                return SimpleNamespace(final_response="ok", usage=None)
+
+        class Codex:
+            def __init__(self, config):
+                instances.append(self)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def thread_start(self, **kwargs):
+                self.settings = kwargs
+                return Thread()
+
+        with patch("openai_codex.AsyncCodex", Codex):
+            await CodexBackend(Path.cwd()).run("inspect", tool_policy="full_access")
+        self.assertEqual(instances[0].settings["sandbox"], Sandbox.full_access)
+
     async def test_agy_one_shot_timeout_kills_process(self):
         class StalledProcess:
             returncode = None
@@ -334,6 +383,22 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 Path.cwd(), dangerously_skip_permissions=True,
             ).run("hello")
         self.assertIn("--dangerously-skip-permissions", spawn.call_args.args)
+
+    async def test_antigravity_full_access_request_requires_server_opt_in(self):
+        with self.assertRaisesRegex(ValueError, "full_access"):
+            await AntigravityCliBackend(Path.cwd()).run("inspect", tool_policy="full_access")
+
+        class Process:
+            returncode = 0
+
+            async def communicate(self):
+                return b'{"status":"SUCCESS","response":"ok"}', b""
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
+            answer = await AntigravityCliBackend(
+                Path.cwd(), dangerously_skip_permissions=True,
+            ).run("inspect", tool_policy="full_access")
+        self.assertEqual(answer.text, "ok")
 
     async def test_antigravity_cli_nonzero_reports_stderr(self):
         class Process:

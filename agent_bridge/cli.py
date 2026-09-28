@@ -43,7 +43,7 @@ def main() -> None:
     ask.add_argument("prompt")
     ask.add_argument("--model", help="Select the remote agent's model ID")
     ask.add_argument("--reasoning-effort", help="Select the provider-specific reasoning effort")
-    ask.add_argument("--tool-policy", choices=["no_tools", "read_only", "workspace_write"])
+    ask.add_argument("--tool-policy", choices=["no_tools", "read_only", "workspace_write", "full_access"])
     info = sub.add_parser("info", help="Read live models, reasoning efforts and account quotas")
     info.add_argument("url")
     discover = sub.add_parser("discover", help="List locally installed harnesses without starting them")
