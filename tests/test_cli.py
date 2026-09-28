@@ -29,7 +29,9 @@ class CliTests(unittest.TestCase):
                 main()
             self.assertEqual(run.call_args.kwargs["port"], 8767)
             self.assertEqual(run.call_args.kwargs["host"], "127.0.0.1")
-            self.assertEqual(run.call_args.args[0].routes[0].path, "/bridge/info")
+            paths = {route.path for route in run.call_args.args[0].routes}
+            self.assertIn("/bridge/info", paths)
+            self.assertIn("/bridge/identity", paths)
 
     def test_profile_required_for_profile_runtime(self):
         with patch("sys.argv", ["agent-bridge", "serve", "profile", "--port", "8767"]):
@@ -98,6 +100,15 @@ class CliTests(unittest.TestCase):
             main()
         self.assertTrue(run.call_args.args[0].routes)
         self.assertTrue(backend.call_args.kwargs["dangerously_skip_permissions"])
+
+    def test_antigravity_turn_timeout_is_configurable_for_server(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("sys.argv", ["agent-bridge", "serve", "antigravity", "--port", "8766",
+                                "--workspace", folder, "--agy-turn-timeout-seconds", "42"]), \
+             patch("agent_bridge.cli.AntigravityCliBackend") as backend, \
+             patch("agent_bridge.cli.uvicorn.run"):
+            main()
+        self.assertEqual(backend.call_args.kwargs["turn_timeout_seconds"], 42)
 
     def test_antigravity_full_permissions_flag_rejected_for_other_backends(self):
         for agent, extra in (("codex", []), ("profile", []),

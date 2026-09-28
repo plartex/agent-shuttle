@@ -34,6 +34,10 @@ def main() -> None:
         "--agy-dangerously-skip-permissions", action="store_true",
         help="Antigravity CLI only: approve every tool call for this Bridge server",
     )
+    serve.add_argument(
+        "--agy-turn-timeout-seconds", type=float, default=None,
+        help="Antigravity CLI only: maximum one-shot turn duration (default: 300 seconds)",
+    )
     ask = sub.add_parser("ask", help="Send a text task to an A2A agent")
     ask.add_argument("url")
     ask.add_argument("prompt")
@@ -72,6 +76,8 @@ def main() -> None:
         return
     if args.agy_dangerously_skip_permissions and (args.agent != "antigravity" or args.agy_mode != "cli"):
         parser.error("--agy-dangerously-skip-permissions requires serve antigravity --agy-mode cli")
+    if args.agy_turn_timeout_seconds is not None and (args.agent != "antigravity" or args.agy_mode != "cli"):
+        parser.error("--agy-turn-timeout-seconds requires serve antigravity --agy-mode cli")
     if args.agent == "profile":
         if args.profile is None:
             parser.error("serve profile requires --profile JSON_PATH")
@@ -95,6 +101,10 @@ def main() -> None:
         backend = AntigravityCliBackend(
             workspace, args.agy_command,
             dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
+            turn_timeout_seconds=(
+                args.agy_turn_timeout_seconds
+                if args.agy_turn_timeout_seconds is not None else 300
+            ),
         )
         info_provider = AntigravityCliInfo(workspace, args.agy_command)
     url = f"http://127.0.0.1:{args.port}"

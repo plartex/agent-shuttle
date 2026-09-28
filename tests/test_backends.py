@@ -99,6 +99,30 @@ class _FakeProcess:
 
 
 class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_turn_timeout_terminates_stalled_session(self):
+        class StalledProcess(_FakeProcess):
+            def __init__(self):
+                super().__init__([])
+                self.stdout = asyncio.StreamReader()
+                self.stderr = asyncio.StreamReader()
+                self.terminated = asyncio.Event()
+
+            async def wait(self):
+                await self.terminated.wait()
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -9
+                self.stdout.feed_eof()
+                self.stderr.feed_eof()
+                self.terminated.set()
+
+        process = StalledProcess()
+        session = _AntigravityCliSession(process, turn_timeout_seconds=0.01)
+        with self.assertRaisesRegex(TimeoutError, "agy session"):
+            await session.ask("hello")
+        self.assertEqual(process.returncode, -9)
+
     async def test_read_only_is_rejected_before_starting_cli(self):
         with tempfile.TemporaryDirectory() as folder:
             backend = AntigravityCliBackend(Path(folder))
@@ -227,6 +251,30 @@ class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
+    async def test_agy_one_shot_timeout_kills_process(self):
+        class StalledProcess:
+            returncode = None
+            killed = False
+
+            async def communicate(self):
+                await asyncio.Event().wait()
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+
+            async def wait(self):
+                return self.returncode
+
+        process = StalledProcess()
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
+            with self.assertRaisesRegex(TimeoutError, "agy"):
+                await AntigravityCliBackend(
+                    Path.cwd(), turn_timeout_seconds=0.01,
+                ).run("hello")
+        self.assertTrue(process.killed)
+        self.assertIn("--print-timeout", spawn.call_args.args)
+
     async def test_codex_one_shot_returns_last_turn_usage(self):
         class Thread:
             async def run(self, prompt):

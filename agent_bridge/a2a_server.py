@@ -21,7 +21,10 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .backends import AntigravityCliBackend, Backend, BackendResponse, BackendSession, CodexBackend
+from .backends import (
+    AntigravityCliBackend, AntigravitySdkBackend, Backend, BackendResponse,
+    BackendSession, CodexBackend,
+)
 from .info import InfoProvider
 from .profiled import ProfiledBackend
 from .profiles import ToolPolicy
@@ -264,6 +267,35 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
+    def identity_data() -> dict:
+        if isinstance(backend, ProfiledBackend):
+            backend_name = backend.profile.runtime
+            workspace = backend.profile.workspace
+        else:
+            backend_name = (
+                "codex_app_server" if isinstance(backend, CodexBackend) else
+                "agy_cli" if isinstance(backend, AntigravityCliBackend) else
+                "antigravity_sdk" if isinstance(backend, AntigravitySdkBackend) else name
+            )
+            workspace = getattr(backend, "workspace", None)
+        result = {"agent": name, "backend": backend_name}
+        if isinstance(workspace, Path):
+            result["workspace"] = str(workspace.resolve(strict=True))
+        result["read_only_tools"] = (
+            isinstance(backend, CodexBackend)
+            or isinstance(backend, ProfiledBackend)
+            and backend.profile.max_tool_policy in {ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE}
+        )
+        if isinstance(backend, AntigravityCliBackend):
+            result["agy_permission_mode"] = (
+                "all" if backend.dangerously_skip_permissions else "settings"
+            )
+            result["agy_turn_timeout_seconds"] = backend.turn_timeout_seconds
+        return result
+
+    async def bridge_identity(request):
+        return JSONResponse(identity_data())
+
     async def bridge_info(request):
         if info_provider is None:
             return JSONResponse({"error": "Info provider is not configured"}, status_code=503)
@@ -275,20 +307,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         except Exception as exc:
             return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=503)
         if capabilities:
-            workspace = getattr(backend, "workspace", None)
-            if isinstance(backend, ProfiledBackend):
-                workspace = backend.profile.workspace
-            if isinstance(workspace, Path):
-                result["workspace"] = str(workspace.resolve(strict=True))
-            result["read_only_tools"] = (
-                isinstance(backend, CodexBackend)
-                or isinstance(backend, ProfiledBackend)
-                and backend.profile.max_tool_policy in {ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE}
-            )
-            if isinstance(backend, AntigravityCliBackend):
-                result["agy_permission_mode"] = (
-                    "all" if backend.dangerously_skip_permissions else "settings"
-                )
+            result.update(identity_data())
         return JSONResponse(result)
 
     async def close_session(request):
@@ -322,6 +341,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
     return Starlette(
         lifespan=lifespan,
         routes=[
+            Route("/bridge/identity", bridge_identity),
             Route("/bridge/info", bridge_info),
             Route("/bridge/capabilities", bridge_info),
             Route("/bridge/usage", bridge_info),

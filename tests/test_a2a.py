@@ -4,6 +4,8 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import uvicorn
@@ -82,6 +84,42 @@ class PolicyEchoBackend(EchoBackend):
 
 
 class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
+    async def test_old_peer_without_identity_requires_restart(self):
+        request = httpx.Request("GET", "http://127.0.0.1:8766/bridge/identity")
+        response = httpx.Response(404, request=request)
+        with patch.object(BridgeClient, "_get", new_callable=AsyncMock,
+                          side_effect=httpx.HTTPStatusError(
+                              "not found", request=request, response=response,
+                          )):
+            with self.assertRaisesRegex(ValueError, "restart"):
+                await BridgeClient().identity("http://127.0.0.1:8766")
+
+    async def test_identity_request_has_short_deadline(self):
+        async def stalled(*args):
+            await asyncio.Event().wait()
+
+        with patch.object(BridgeClient, "_get", new=stalled):
+            with self.assertRaises(TimeoutError):
+                await BridgeClient(timeout_seconds=0.01).identity("http://127.0.0.1:8766")
+
+    async def test_identity_is_static_even_when_agy_info_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            info = SimpleNamespace(fetch=AsyncMock(side_effect=RuntimeError("agy stalled")))
+            backend = AntigravityCliBackend(
+                Path(folder), dangerously_skip_permissions=True,
+            )
+            app = make_app("antigravity", backend, "http://127.0.0.1:8766", info)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test",
+            ) as http:
+                response = await http.get("/bridge/identity")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["backend"], "agy_cli")
+            self.assertEqual(response.json()["workspace"], str(Path(folder).resolve()))
+            self.assertEqual(response.json()["agy_permission_mode"], "all")
+            self.assertEqual(response.json()["agy_turn_timeout_seconds"], 300)
+            info.fetch.assert_not_called()
+
     async def test_capabilities_identify_workspace_and_read_only_tool_support(self):
         with tempfile.TemporaryDirectory() as folder:
             profile = AgentProfile.from_mapping({

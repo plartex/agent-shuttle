@@ -28,6 +28,71 @@ class FakeProcess:
 
 
 class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
+    async def test_metadata_timeout_must_be_finite(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for value in (0, float("inf"), float("nan"), True):
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "positive finite"):
+                    AntigravityCliInfo(Path(folder), timeout_seconds=value)
+
+    async def test_metadata_calls_are_serialized(self):
+        active = 0
+        peak = 0
+
+        def envelope(data):
+            return json.dumps({"status": "SUCCESS", "command": {"data": data}}).encode()
+
+        class DelayedProcess(FakeProcess):
+            async def communicate(self):
+                nonlocal active, peak
+                active += 1
+                peak = max(peak, active)
+                try:
+                    await asyncio.sleep(0.01)
+                    return await super().communicate()
+                finally:
+                    active -= 1
+
+        async def spawn(*args, **kwargs):
+            if "models" in args:
+                data = {"models": [{"id": "m"}]}
+            elif "/model" in args:
+                data = {"id": "m"}
+            elif "/effort" in args:
+                data = {"current": "high"}
+            else:
+                data = {"groups": []}
+            return DelayedProcess(envelope(data))
+
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("agent_bridge.info.asyncio.create_subprocess_exec", side_effect=spawn):
+            info = AntigravityCliInfo(Path(folder))
+            await asyncio.gather(
+                info.fetch(capabilities=True, usage=False),
+                info.fetch(capabilities=True, usage=False),
+            )
+        self.assertEqual(peak, 1)
+
+    async def test_stalled_metadata_process_is_killed_on_timeout(self):
+        class StalledProcess(FakeProcess):
+            def __init__(self):
+                super().__init__(b"")
+                self.killed = False
+
+            async def communicate(self):
+                await asyncio.Event().wait()
+
+            def kill(self):
+                self.killed = True
+                super().kill()
+
+        process = StalledProcess()
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=process):
+            info = AntigravityCliInfo(Path(folder), timeout_seconds=0.01)
+            with self.assertRaisesRegex(TimeoutError, "models"):
+                await info._read("models")
+        self.assertTrue(process.killed)
+
     async def test_models_effort_and_quota_are_normalized(self):
         def envelope(data):
             return ("progress\n" + json.dumps({"status": "SUCCESS", "command": {"data": data}}) + "\n").encode()
