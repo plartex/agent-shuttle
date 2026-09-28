@@ -41,6 +41,20 @@ class BridgeClient:
         """Read the peer's current model catalog, effort options, and account quotas."""
         return await self._get(peer_url, "/bridge/info")
 
+    async def identity(self, peer_url: str) -> dict:
+        """Read local server identity and safety mode without starting a model CLI."""
+        try:
+            return await asyncio.wait_for(
+                self._get(peer_url, "/bridge/identity"),
+                timeout=min(self.timeout_seconds, 10.0),
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise ValueError(
+                    f"Bridge at {peer_url} lacks /bridge/identity; restart it with the current version"
+                ) from exc
+            raise
+
     async def capabilities(self, peer_url: str) -> dict:
         return await self._get(peer_url, "/bridge/capabilities")
 

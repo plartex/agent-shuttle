@@ -47,6 +47,7 @@ class HarnessLaunch:
     start_if_missing: bool = True
     tool_policy: str | None = None
     agy_dangerously_skip_permissions: bool = False
+    agy_turn_timeout_seconds: float = 300
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,8 @@ def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
         expected_mode = "all" if launch.agy_dangerously_skip_permissions else "settings"
         if info.get("agy_permission_mode") != expected_mode:
             raise ValueError(f"{launch.url} Antigravity permission mode does not match {expected_mode!r}")
+        if info.get("agy_turn_timeout_seconds") != launch.agy_turn_timeout_seconds:
+            raise ValueError(f"{launch.url} Antigravity turn timeout does not match")
 
 
 def _local_port(url: str) -> int:
@@ -108,11 +111,19 @@ async def connect_harness(
         raise ValueError("agy_dangerously_skip_permissions must be a boolean")
     if launch.agy_dangerously_skip_permissions and launch.name != "antigravity":
         raise ValueError("agy_dangerously_skip_permissions requires the antigravity harness")
+    if launch.agy_turn_timeout_seconds != 300 and launch.name != "antigravity":
+        raise ValueError("agy_turn_timeout_seconds requires the antigravity harness")
+    if launch.name == "antigravity":
+        if (not isinstance(launch.agy_turn_timeout_seconds, (int, float))
+                or isinstance(launch.agy_turn_timeout_seconds, bool)
+                or not 0 < launch.agy_turn_timeout_seconds < float("inf")):
+            raise ValueError("agy_turn_timeout_seconds must be positive and finite")
     if launch.name == "antigravity" and launch.tool_policy is not None:
         raise ValueError(f"Antigravity CLI cannot enforce {launch.tool_policy}")
     client = client or BridgeClient()
+    identify = getattr(client, "identity", None) or client.capabilities
     try:
-        _verify_connection(launch, await client.capabilities(launch.url))
+        _verify_connection(launch, await identify(launch.url))
     except ValueError:
         raise
     except Exception as exc:
@@ -158,6 +169,7 @@ async def connect_harness(
             argv.extend(["--profile", str(profile_path)])
         if launch.name == "antigravity":
             argv.extend(["--agy-command", command])
+            argv.extend(["--agy-turn-timeout-seconds", f"{launch.agy_turn_timeout_seconds:g}"])
             if launch.agy_dangerously_skip_permissions:
                 argv.append("--agy-dangerously-skip-permissions")
         log_path = launch.log_path or Path(temporary) / "bridge.log"
@@ -173,7 +185,7 @@ async def connect_harness(
                             f"log tail: {log_path.read_text(encoding='utf-8', errors='replace')[-2000:]}"
                         )
                     try:
-                        _verify_connection(launch, await client.capabilities(launch.url))
+                        _verify_connection(launch, await identify(launch.url))
                         break
                     except ValueError:
                         raise

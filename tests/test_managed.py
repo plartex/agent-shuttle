@@ -11,6 +11,25 @@ from agent_bridge import HarnessLaunch, connect_harness
 
 
 class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reuse_checks_static_identity_without_fetching_models(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch("antigravity", "http://127.0.0.1:8766", root)
+            client = SimpleNamespace(
+                identity=AsyncMock(return_value={
+                    "backend": "agy_cli", "workspace": str(root.resolve()),
+                    "read_only_tools": False, "agy_permission_mode": "settings",
+                    "agy_turn_timeout_seconds": 300,
+                }),
+                capabilities=AsyncMock(side_effect=AssertionError("model lookup is not readiness")),
+            )
+            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+                async with connect_harness(launch, client=client) as connection:
+                    self.assertFalse(connection.started)
+            client.identity.assert_awaited_once_with(launch.url)
+            client.capabilities.assert_not_called()
+            popen.assert_not_called()
+
     async def test_reuses_matching_server_without_starting_process(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
@@ -186,7 +205,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
-                                    "read_only_tools": False, "agy_permission_mode": "all"},
+                                    "read_only_tools": False, "agy_permission_mode": "all",
+                                    "agy_turn_timeout_seconds": 300},
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
@@ -204,7 +224,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
-                                    "read_only_tools": False, "agy_permission_mode": "settings"},
+                                    "read_only_tools": False, "agy_permission_mode": "settings",
+                                    "agy_turn_timeout_seconds": 300},
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
@@ -212,6 +233,27 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                  patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     self.assertNotIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
+
+    async def test_antigravity_turn_timeout_passes_to_temporary_server(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "antigravity", "http://127.0.0.1:8766", root,
+                command="C:/tools/agy.exe", log_path=root / "bridge.log",
+                agy_turn_timeout_seconds=42,
+            )
+            client = SimpleNamespace(identity=AsyncMock(side_effect=[
+                OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
+                                    "agy_permission_mode": "settings",
+                                    "agy_turn_timeout_seconds": 42},
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    argv = popen.call_args.args[0]
+                    self.assertEqual(argv[argv.index("--agy-turn-timeout-seconds") + 1], "42")
 
     async def test_antigravity_permission_mode_mismatch_prevents_reuse(self):
         with tempfile.TemporaryDirectory() as folder:

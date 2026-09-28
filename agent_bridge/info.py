@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timezone
 from enum import Enum
 import json
+import math
 import os
 from pathlib import Path
 from typing import Protocol
@@ -35,11 +36,23 @@ class InfoProvider(Protocol):
 
 
 class AntigravityCliInfo:
-    def __init__(self, workspace: Path, command: str = "agy"):
+    def __init__(self, workspace: Path, command: str = "agy", *, timeout_seconds: float = 45):
+        if (not isinstance(timeout_seconds, (int, float))
+                or isinstance(timeout_seconds, bool)
+                or not math.isfinite(timeout_seconds)
+                or timeout_seconds <= 0):
+            raise ValueError("timeout_seconds must be positive finite")
         self.workspace = workspace.resolve(strict=True)
         self.command = command
+        self.timeout_seconds = timeout_seconds
+        self._read_lock = asyncio.Lock()
 
     async def _read(self, *args: str) -> dict:
+        # Multiple HTTP info requests must not start competing agy processes.
+        async with self._read_lock:
+            return await self._read_unlocked(*args)
+
+    async def _read_unlocked(self, *args: str) -> dict:
         process = await asyncio.create_subprocess_exec(
             self.command,
             *args,
@@ -49,7 +62,13 @@ class AntigravityCliInfo:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await asyncio.wait_for(process.communicate(), self.timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise TimeoutError(
+                f"agy info {' '.join(args)} timed out after {self.timeout_seconds:g}s"
+            ) from exc
         except asyncio.CancelledError:
             process.kill()
             await process.wait()
@@ -72,18 +91,18 @@ class AntigravityCliInfo:
         return envelope.get("command", {}).get("data", {})
 
     async def fetch(self, *, capabilities: bool = True, usage: bool = True) -> dict:
-        calls = []
+        calls: list[tuple[str, ...]] = []
         if capabilities:
             calls.extend(
                 [
-                    self._read("--output-format", "json", "models"),
-                    self._read("-p", "/model", "--output-format", "json"),
-                    self._read("-p", "/effort", "--output-format", "json"),
+                    ("--output-format", "json", "models"),
+                    ("-p", "/model", "--output-format", "json"),
+                    ("-p", "/effort", "--output-format", "json"),
                 ]
             )
         if usage:
-            calls.append(self._read("-p", "/usage", "--output-format", "json"))
-        results = iter(await asyncio.gather(*calls))
+            calls.append(("-p", "/usage", "--output-format", "json"))
+        results = iter([await self._read(*args) for args in calls])
         data = {"agent": "antigravity", "backend": "agy_cli", "fetched_at": _utc_now()}
         if capabilities:
             model_list = next(results)

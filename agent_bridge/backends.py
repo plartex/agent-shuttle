@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -196,12 +197,19 @@ class AntigravityCliBackend:
     def __init__(
         self, workspace: Path, command: str = "agy", *,
         dangerously_skip_permissions: bool = False,
+        turn_timeout_seconds: float = 300,
     ):
         if not isinstance(dangerously_skip_permissions, bool):
             raise TypeError("dangerously_skip_permissions must be a boolean")
+        if (not isinstance(turn_timeout_seconds, (int, float))
+                or isinstance(turn_timeout_seconds, bool)
+                or not math.isfinite(turn_timeout_seconds)
+                or turn_timeout_seconds <= 0):
+            raise ValueError("turn_timeout_seconds must be a positive finite number")
         self.workspace = workspace.resolve(strict=True)
         self.command = command
         self.dangerously_skip_permissions = dangerously_skip_permissions
+        self.turn_timeout_seconds = turn_timeout_seconds
 
     async def run(
         self,
@@ -216,7 +224,8 @@ class AntigravityCliBackend:
             raise ValueError("Antigravity CLI cannot enforce read-only tools in headless mode")
         if tool_policy is not None:
             raise ValueError(f"Antigravity CLI cannot enforce {tool_policy}")
-        command = [self.command, "-p", prompt, "--output-format", "json"]
+        command = [self.command, "-p", prompt, "--output-format", "json",
+                   "--print-timeout", f"{self.turn_timeout_seconds:g}s"]
         if self.dangerously_skip_permissions:
             command.append("--dangerously-skip-permissions")
         if model:
@@ -231,7 +240,15 @@ class AntigravityCliBackend:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=self.turn_timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise TimeoutError(
+                f"agy did not return a result within {self.turn_timeout_seconds:g}s"
+            ) from exc
         except asyncio.CancelledError:
             process.kill()
             await process.wait()
@@ -274,8 +291,9 @@ class AntigravityCliBackend:
 
 
 class _AntigravityCliSession:
-    def __init__(self, process: asyncio.subprocess.Process):
+    def __init__(self, process: asyncio.subprocess.Process, *, turn_timeout_seconds: float = 1800):
         self.process = process
+        self.turn_timeout_seconds = turn_timeout_seconds
         self.previous_usage: dict[str, int] = {}
         self.stderr_tail = b""
         self.stderr_task = asyncio.create_task(self._drain_stderr())
@@ -286,6 +304,22 @@ class _AntigravityCliSession:
             self.stderr_tail = (self.stderr_tail + chunk)[-4000:]
 
     async def ask(self, prompt: str) -> BackendResponse:
+        try:
+            async with asyncio.timeout(self.turn_timeout_seconds):
+                return await self._ask_within_deadline(prompt)
+        except TimeoutError as exc:
+            if self.process.returncode is None:
+                try:
+                    self.process.kill()
+                except ProcessLookupError:
+                    pass
+            await self.process.wait()
+            await self.stderr_task
+            raise TimeoutError(
+                f"agy session did not return a result within {self.turn_timeout_seconds:g}s"
+            ) from exc
+
+    async def _ask_within_deadline(self, prompt: str) -> BackendResponse:
         if self.process.returncode is not None:
             raise RuntimeError(f"agy session exited ({self.process.returncode}): {self.stderr_tail.decode(errors='replace')}")
         assert self.process.stdin is not None and self.process.stdout is not None

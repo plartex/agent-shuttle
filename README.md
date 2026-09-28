@@ -30,7 +30,9 @@ Antigravity CLI в headless-режиме не может запросить по
 
 `agent-bridge discover` (или `discover_harnesses()` в Python) показывает доступные локальные харнессы без запуска серверов и моделей. Поиск проверяет `PATH` и типовые пользовательские каталоги установки на Windows; для `agy.exe` также учитываются `BRIDGE_AGY_COMMAND`, `%LOCALAPPDATA%\agy\bin` и `bin` рядом с исходным checkout Agent Bridge. Пути можно переопределить флагами `--agy-command`, `--opencode-command`, `--claude-command` или аргументом `discover_harnesses({"opencode": "C:/tools/opencode.exe"})`. Обнаружение не означает, что Ollama уже запущена или нужная модель загружена.
 
-Для приложения, которому нужен сервер только на время работы, есть `async with connect_harness(HarnessLaunch(name="codex", url="http://127.0.0.1:8765", workspace=Path.cwd())) as peer`. API повторно использует подходящий работающий Bridge либо запускает временный, проверяет backend и останавливает запущенный им процесс при выходе. `start_if_missing=False` требует уже работающий сервер; `command`, `profile_path`, `model`, `ollama_url` и `log_path` настраивают запуск. Сам Bridge не задаёт промпты и не запускает проверку качества кода — это делает приложение-клиент.
+Для приложения, которому нужен сервер только на время работы, есть `async with connect_harness(HarnessLaunch(name="codex", url="http://127.0.0.1:8765", workspace=Path.cwd())) as peer`. API повторно использует подходящий работающий Bridge либо запускает временный, проверяет backend и останавливает запущенный им процесс при выходе. `start_if_missing=False` требует уже работающий сервер; `command`, `profile_path`, `model`, `ollama_url` и `log_path` настраивают запуск. Для проверки готовности используется быстрый `/bridge/identity`, который не запускает модельный CLI; `/bridge/capabilities` и `/bridge/info` отдельно запрашивают актуальные модели и лимиты. Сам Bridge не задаёт промпты и не запускает проверку качества кода — это делает приложение-клиент.
+
+Разовый вызов Antigravity ограничен 300 секундами по умолчанию: Bridge передаёт `--print-timeout` и сам завершает зависший `agy`. Для долгих задач задайте `--agy-turn-timeout-seconds N` при `serve antigravity`, `HarnessLaunch(agy_turn_timeout_seconds=N)` либо `AntigravityCliBackend(..., turn_timeout_seconds=N)`. `/bridge/identity` сообщает текущий лимит; `connect_harness()` проверяет его при повторном использовании сервера. Вызовы метаданных `agy` выполняются последовательно с тайм-аутом 45 секунд на каждый процесс. Каждый ход потоковой сессии ограничен отдельными 30 минутами и со стороны `agy`, и со стороны Bridge.
 
 ## Профили OpenCode и Claude Code
 
@@ -152,6 +154,7 @@ Invoke-RestMethod http://127.0.0.1:8766/bridge/usage
 ```
 
 - `/bridge/info` — полный снимок;
+- `/bridge/identity` — backend, workspace и режим разрешений без запуска `agy`;
 - `/bridge/capabilities` — выбранная модель, effort и каталог моделей;
 - `/bridge/usage` — группы квот, использованный и оставшийся процент, окно и время сброса.
 

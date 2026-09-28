@@ -12,6 +12,7 @@ import socket
 import unittest
 import uuid
 from pathlib import Path
+from time import monotonic
 
 from agent_bridge import BridgeClient, HarnessLaunch, connect_harness, discover_harnesses
 from agent_bridge.backends import AntigravityCliBackend
@@ -22,6 +23,40 @@ from agent_bridge.backends import AntigravityCliBackend
     "requires explicit BRIDGE_LIVE_AGY_FULL_ACCESS=1 opt-in",
 )
 class LiveAntigravityPermissionsTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(
+        os.environ.get("BRIDGE_LIVE_AGY_STREAM_FULL_ACCESS") == "1",
+        "requires separate BRIDGE_LIVE_AGY_STREAM_FULL_ACCESS=1 opt-in",
+    )
+    async def test_full_permissions_execute_command_in_stream_session(self):
+        command = os.environ.get("BRIDGE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
+        if not command:
+            self.fail("agy executable not found; set BRIDGE_LIVE_AGY_COMMAND")
+
+        root = Path(__file__).resolve().parents[1] / ".runtime" / (
+            "agy-full-access-stream-" + uuid.uuid4().hex[:12]
+        )
+        root.mkdir(parents=True)
+        nonce = "AGY_FULL_ACCESS_" + uuid.uuid4().hex
+        marker = root / "probe.txt"
+        backend = AntigravityCliBackend(root, command, dangerously_skip_permissions=True)
+        prompt = (
+            "In this empty workspace, call RunCommand to execute exactly this "
+            f"PowerShell command: Set-Content -LiteralPath probe.txt -Value {nonce} -NoNewline. "
+            "Do not use a file-writing tool. Then reply OK."
+        )
+        async with asyncio.timeout(180):
+            session = await backend.open_session()
+            try:
+                result = await session.ask(prompt)
+            finally:
+                await session.close()
+        trace = {
+            "workspace": str(root), "response": result.text,
+            "usage": result.usage, "marker_exists": marker.is_file(),
+        }
+        print("ANTIGRAVITY_FULL_ACCESS_STREAM_TRACE=" + json.dumps(trace, ensure_ascii=False))
+        self.assertEqual(marker.read_text(encoding="utf-8"), nonce)
+
     async def test_full_permissions_execute_command_direct_backend(self):
         command = os.environ.get("BRIDGE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
         if not command:
@@ -78,16 +113,19 @@ class LiveAntigravityPermissionsTests(unittest.IsolatedAsyncioTestCase):
             f"PowerShell command: Set-Content -LiteralPath probe.txt -Value {nonce} -NoNewline. "
             "Do not use a file-writing tool. Then reply OK."
         )
+        started = monotonic()
         async with asyncio.timeout(180):
             async with connect_harness(launch, client=client):
-                capabilities = await client.capabilities(url)
-                self.assertEqual(capabilities["agy_permission_mode"], "all")
-                self.assertEqual(Path(capabilities["workspace"]).resolve(), root.resolve())
+                startup_seconds = round(monotonic() - started, 3)
+                identity = await client.identity(url)
+                self.assertEqual(identity["agy_permission_mode"], "all")
+                self.assertEqual(Path(identity["workspace"]).resolve(), root.resolve())
                 result = await client.ask(url, prompt)
 
         trace = {
             "workspace": str(root), "bridge_log": str(root / "bridge.log"),
-            "mode": capabilities["agy_permission_mode"],
+            "startup_seconds": startup_seconds,
+            "mode": identity["agy_permission_mode"],
             "state": result.state, "response": result.text, "usage": result.usage,
             "marker_exists": marker.is_file(),
         }
