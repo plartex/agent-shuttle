@@ -119,6 +119,23 @@ def _codex_response(result) -> BackendResponse:
     return BackendResponse(result.final_response or "", usage)
 
 
+def _codex_sandbox(sandbox_type, read_only: bool, tool_policy: str | None):
+    if read_only and tool_policy not in (None, "read_only"):
+        raise ValueError("read_only conflicts with tool_policy")
+    policy = tool_policy or ("read_only" if read_only else "workspace_write")
+    if policy == "no_tools":
+        raise ValueError("Codex cannot enforce no_tools")
+    choices = {
+        "read_only": sandbox_type.read_only,
+        "workspace_write": sandbox_type.workspace_write,
+        "full_access": sandbox_type.full_access,
+    }
+    try:
+        return choices[policy]
+    except KeyError as exc:
+        raise ValueError(f"Unknown Codex tool_policy {policy!r}") from exc
+
+
 class CodexBackend:
     def __init__(self, workspace: Path):
         self.workspace = workspace.resolve(strict=True)
@@ -130,8 +147,11 @@ class CodexBackend:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
+        tool_policy: str | None = None,
     ) -> BackendResponse:
         from openai_codex import AsyncCodex, CodexConfig, Sandbox
+
+        sandbox = _codex_sandbox(Sandbox, read_only, tool_policy)
 
         # The Windows CLI needs an explicit home in some non-interactive shells.
         codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
@@ -145,7 +165,7 @@ class CodexBackend:
                     if reasoning_effort is not None
                     else None
                 ),
-                sandbox=Sandbox.read_only if read_only else Sandbox.workspace_write,
+                sandbox=sandbox,
             )
             result = await thread.run(prompt)
             return _codex_response(result)
@@ -156,8 +176,11 @@ class CodexBackend:
         *,
         reasoning_effort: str | None = None,
         read_only: bool = False,
+        tool_policy: str | None = None,
     ) -> BackendSession:
         from openai_codex import AsyncCodex, CodexConfig, Sandbox
+
+        sandbox = _codex_sandbox(Sandbox, read_only, tool_policy)
 
         codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
         codex = AsyncCodex(CodexConfig(env={**os.environ, "CODEX_HOME": codex_home}))
@@ -170,7 +193,7 @@ class CodexBackend:
                     {"model_reasoning_effort": reasoning_effort}
                     if reasoning_effort is not None else None
                 ),
-                sandbox=Sandbox.read_only if read_only else Sandbox.workspace_write,
+                sandbox=sandbox,
             )
         except BaseException:
             await codex.__aexit__(None, None, None)
@@ -222,7 +245,9 @@ class AntigravityCliBackend:
     ) -> BackendResponse:
         if read_only:
             raise ValueError("Antigravity CLI cannot enforce read-only tools in headless mode")
-        if tool_policy is not None:
+        if tool_policy is not None and not (
+            tool_policy == "full_access" and self.dangerously_skip_permissions
+        ):
             raise ValueError(f"Antigravity CLI cannot enforce {tool_policy}")
         command = [self.command, "-p", prompt, "--output-format", "json",
                    "--print-timeout", f"{self.turn_timeout_seconds:g}s"]
@@ -270,7 +295,9 @@ class AntigravityCliBackend:
     ) -> BackendSession:
         if read_only:
             raise ValueError("Antigravity CLI cannot enforce read-only tools in headless mode")
-        if tool_policy is not None:
+        if tool_policy is not None and not (
+            tool_policy == "full_access" and self.dangerously_skip_permissions
+        ):
             raise ValueError(f"Antigravity CLI cannot enforce {tool_policy}")
         command = [self.command, "--input-format", "stream-json", "--output-format", "stream-json", "--print-timeout", "30m"]
         if self.dangerously_skip_permissions:

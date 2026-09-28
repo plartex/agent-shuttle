@@ -107,7 +107,9 @@ class ClaudeCodeSession:
             "--bare", "--strict-mcp-config", "--setting-sources", "",
             "--permission-prompts", "none", "--model", self.selection.model,
         ]
-        if self.selection.tool_policy is not ToolPolicy.WORKSPACE_WRITE:
+        if self.selection.tool_policy is ToolPolicy.FULL_ACCESS:
+            command.append("--dangerously-skip-permissions")
+        elif self.selection.tool_policy is not ToolPolicy.WORKSPACE_WRITE:
             command.append("--safe-mode")
             command.extend([
                 "--tools", "" if self.selection.tool_policy is ToolPolicy.NO_TOOLS else "Read,Glob,Grep",

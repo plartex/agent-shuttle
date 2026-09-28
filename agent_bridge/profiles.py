@@ -17,12 +17,14 @@ class ToolPolicy(str, Enum):
     NO_TOOLS = "no_tools"
     READ_ONLY = "read_only"
     WORKSPACE_WRITE = "workspace_write"
+    FULL_ACCESS = "full_access"
 
 
 _POLICY_RANK = {
     ToolPolicy.NO_TOOLS: 0,
     ToolPolicy.READ_ONLY: 1,
     ToolPolicy.WORKSPACE_WRITE: 2,
+    ToolPolicy.FULL_ACCESS: 3,
 }
 
 

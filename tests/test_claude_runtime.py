@@ -30,6 +30,18 @@ class FakeProcess:
 
 
 class ClaudeCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_access_passes_explicit_permission_bypass(self):
+        with tempfile.TemporaryDirectory() as folder:
+            profile = AgentProfile.from_mapping({
+                "id": "full", "runtime": "claude_code", "provider": "ollama",
+                "workspace": folder, "default_model": "test", "allowed_models": ["test"],
+                "max_tool_policy": "full_access",
+            })
+            runtime = ClaudeCodeRuntime(profile)
+            session = await runtime.open_session(profile.resolve(None, None, "full_access"))
+            self.assertIn("--dangerously-skip-permissions", session._command())
+            await runtime.close()
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
