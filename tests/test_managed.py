@@ -11,6 +11,26 @@ from agent_bridge import HarnessLaunch, connect_harness
 
 
 class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_access_policy_alone_configures_antigravity_harness(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch(
+                "antigravity", "http://127.0.0.1:8766", root,
+                command="C:/tools/agy.exe", tool_policy="full_access",
+            )
+            client = SimpleNamespace(identity=AsyncMock(side_effect=[
+                OSError("offline"), {
+                    "backend": "agy_cli", "workspace": str(root.resolve()),
+                    "agy_permission_mode": "all", "agy_turn_timeout_seconds": 300,
+                },
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client):
+                    self.assertIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
+
     async def test_temp_ollama_profile_can_opt_into_full_access(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

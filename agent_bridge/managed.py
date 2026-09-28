@@ -32,7 +32,9 @@ class HarnessLaunch:
     """How to connect to a Bridge peer, starting one only when needed.
 
     ``profile_path`` selects a user-owned OpenCode/Claude Code profile. Without
-    one, those runtimes receive a temporary no-tools Ollama profile for ``model``.
+    one, those runtimes receive a temporary Ollama profile for ``model`` with
+    ``tool_policy`` as its maximum (or no tools by default). For Antigravity,
+    ``full_access`` enables the CLI's all-permissions mode automatically.
     ``start_if_missing=False`` is appropriate for an explicitly supplied URL.
     """
 
@@ -78,7 +80,10 @@ def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
     if launch.tool_policy == "read_only" and info.get("read_only_tools") is not True:
         raise ValueError(f"{launch.url} cannot confirm read-only tools")
     if launch.name == "antigravity":
-        expected_mode = "all" if launch.agy_dangerously_skip_permissions else "settings"
+        expected_mode = (
+            "all" if launch.tool_policy == "full_access" or launch.agy_dangerously_skip_permissions
+            else "settings"
+        )
         if info.get("agy_permission_mode") != expected_mode:
             raise ValueError(f"{launch.url} Antigravity permission mode does not match {expected_mode!r}")
         if info.get("agy_turn_timeout_seconds") != launch.agy_turn_timeout_seconds:
@@ -120,8 +125,6 @@ async def connect_harness(
             raise ValueError("agy_turn_timeout_seconds must be positive and finite")
     if launch.name == "antigravity" and launch.tool_policy not in {None, "full_access"}:
         raise ValueError(f"Antigravity CLI cannot enforce {launch.tool_policy}")
-    if launch.name == "antigravity" and launch.tool_policy == "full_access" and not launch.agy_dangerously_skip_permissions:
-        raise ValueError("Antigravity full_access requires agy_dangerously_skip_permissions=True")
     client = client or BridgeClient()
     identify = getattr(client, "identity", None) or client.capabilities
     try:
@@ -172,7 +175,7 @@ async def connect_harness(
         if launch.name == "antigravity":
             argv.extend(["--agy-command", command])
             argv.extend(["--agy-turn-timeout-seconds", f"{launch.agy_turn_timeout_seconds:g}"])
-            if launch.agy_dangerously_skip_permissions:
+            if launch.tool_policy == "full_access" or launch.agy_dangerously_skip_permissions:
                 argv.append("--agy-dangerously-skip-permissions")
         log_path = launch.log_path or Path(temporary) / "bridge.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
