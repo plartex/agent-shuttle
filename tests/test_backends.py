@@ -323,6 +323,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 ).run("hello")
         self.assertTrue(process.killed)
         self.assertIn("--print-timeout", spawn.call_args.args)
+        self.assertEqual(spawn.call_count, 1)
 
     async def test_codex_one_shot_returns_last_turn_usage(self):
         class Thread:
@@ -371,6 +372,44 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--effort", spawn.call_args.args)
         self.assertNotIn("--dangerously-skip-permissions", spawn.call_args.args)
 
+    async def test_antigravity_keeps_stdin_open_until_headless_turn_ends(self):
+        class Reader:
+            def __init__(self, data):
+                self.data = data
+
+            async def read(self):
+                return self.data
+
+        class Stdin:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Process:
+            returncode = 0
+
+            def __init__(self):
+                self.stdin = Stdin()
+                self.stdout = Reader(b'{"status":"SUCCESS","response":"OK"}')
+                self.stderr = Reader(b"")
+
+            async def wait(self):
+                self.stdin_open_at_exit = not self.stdin.closed
+                return 0
+
+            async def communicate(self):
+                raise AssertionError("communicate() would close stdin before the turn")
+
+        process = Process()
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+                   return_value=process) as spawn:
+            result = await AntigravityCliBackend(Path.cwd()).run("hello")
+        self.assertEqual(result.text, "OK")
+        self.assertTrue(process.stdin_open_at_exit)
+        self.assertTrue(process.stdin.closed)
+        self.assertEqual(spawn.call_args.kwargs["stdin"], asyncio.subprocess.PIPE)
+
     async def test_antigravity_cli_all_permissions_requires_explicit_opt_in(self):
         class Process:
             returncode = 0
@@ -410,6 +449,57 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
         with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
             with self.assertRaisesRegex(RuntimeError, "bad model"):
                 await AntigravityCliBackend(Path.cwd()).run("hello")
+
+    async def test_antigravity_retries_only_preflight_tls_failure(self):
+        class Process:
+            def __init__(self, code, stdout=b"", stderr=b""):
+                self.returncode = code
+                self.stdout = stdout
+                self.stderr = stderr
+
+            async def communicate(self):
+                return self.stdout, self.stderr
+
+        failure = Process(1, stderr=(
+            b"error: Eligibility check failed: failed to get profile picture: "
+            b"net/http: TLS handshake timeout"
+        ))
+        success = Process(0, stdout=b'{"status":"SUCCESS","response":"OK"}')
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+                   side_effect=[failure, success]) as spawn, \
+             patch("agent_bridge.backends.asyncio.sleep"):
+            answer = await AntigravityCliBackend(Path.cwd()).run("hello")
+        self.assertEqual(answer.text, "OK")
+        self.assertEqual(answer.details, {"preflight_retries": 1})
+        self.assertEqual(spawn.call_count, 2)
+
+    async def test_antigravity_preflight_retry_is_bounded(self):
+        class Process:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", (b"Eligibility check failed: failed to get profile picture: "
+                             b"net/http: TLS handshake timeout")
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+                   return_value=Process()) as spawn, \
+             patch("agent_bridge.backends.asyncio.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "after 3 attempt"):
+                await AntigravityCliBackend(Path.cwd()).run("hello")
+        self.assertEqual(spawn.call_count, 3)
+
+    async def test_antigravity_does_not_retry_other_cli_failure(self):
+        class Process:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"error: model request failed: TLS handshake timeout"
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+                   return_value=Process()) as spawn:
+            with self.assertRaisesRegex(RuntimeError, "model request failed"):
+                await AntigravityCliBackend(Path.cwd()).run("hello")
+        self.assertEqual(spawn.call_count, 1)
 
     async def test_sdk_requires_worker_and_rejects_effort(self):
         backend = AntigravitySdkBackend(Path.cwd(), Path.cwd() / "nonexistent-python")

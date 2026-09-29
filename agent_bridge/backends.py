@@ -15,6 +15,33 @@ class AntigravityPermissionDenied(RuntimeError):
     """The CLI completed a turn without permission for a requested tool."""
 
 
+def _retryable_agy_preflight_failure(stderr: bytes) -> bool:
+    """Retry only a known failure before Antigravity starts the agent turn."""
+    message = stderr.decode(errors="replace").lower()
+    return (
+        "eligibility check failed" in message
+        and "failed to get profile picture" in message
+        and "tls handshake timeout" in message
+    )
+
+
+async def _read_agy_headless_output(process: asyncio.subprocess.Process) -> tuple[bytes, bytes]:
+    """Drain both outputs while keeping stdin open for the CLI's entire turn."""
+    stdin = getattr(process, "stdin", None)
+    if stdin is None:
+        return await process.communicate()
+    try:
+        stdout, stderr, _ = await asyncio.gather(
+            process.stdout.read(), process.stderr.read(), process.wait(),
+        )
+        return stdout, stderr
+    finally:
+        try:
+            stdin.close()
+        except OSError:
+            pass
+
+
 def _check_agy_denials(result: dict) -> None:
     denied = result.get("denied_actions")
     if not denied:
@@ -257,33 +284,46 @@ class AntigravityCliBackend:
             command.extend(["--model", model])
         if reasoning_effort:
             command.extend(["--effort", reasoning_effort])
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(self.workspace),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=self.turn_timeout_seconds,
+        deadline = asyncio.get_running_loop().time() + self.turn_timeout_seconds
+        for attempt in range(3):
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"agy did not return a result within {self.turn_timeout_seconds:g}s"
+                )
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(self.workspace),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except asyncio.TimeoutError as exc:
-            process.kill()
-            await process.wait()
-            raise TimeoutError(
-                f"agy did not return a result within {self.turn_timeout_seconds:g}s"
-            ) from exc
-        except asyncio.CancelledError:
-            process.kill()
-            await process.wait()
-            raise
-        if process.returncode:
-            raise RuntimeError(
-                f"agy failed ({process.returncode}): {stderr.decode(errors='replace')[-4000:]}"
-            )
-        response = _decode_agy_result(stdout, stderr)
-        return BackendResponse(response, _decode_agy_usage(stdout))
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    _read_agy_headless_output(process), timeout=remaining,
+                )
+            except asyncio.TimeoutError as exc:
+                process.kill()
+                await process.wait()
+                raise TimeoutError(
+                    f"agy did not return a result within {self.turn_timeout_seconds:g}s"
+                ) from exc
+            except asyncio.CancelledError:
+                process.kill()
+                await process.wait()
+                raise
+            if process.returncode:
+                if attempt < 2 and _retryable_agy_preflight_failure(stderr):
+                    await asyncio.sleep(min(0.5 * (attempt + 1), max(0, deadline - asyncio.get_running_loop().time())))
+                    continue
+                raise RuntimeError(
+                    f"agy failed ({process.returncode}) after {attempt + 1} attempt(s): "
+                    f"{stderr.decode(errors='replace')[-4000:]}"
+                )
+            response = _decode_agy_result(stdout, stderr)
+            details = {"preflight_retries": attempt} if attempt else None
+            return BackendResponse(response, _decode_agy_usage(stdout), details)
+        raise AssertionError("Antigravity retry loop exhausted unexpectedly")
 
     async def open_session(
         self,
