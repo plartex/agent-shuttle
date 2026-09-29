@@ -1,4 +1,4 @@
-# Agent Bridge
+# Agent Shuttle
 
 [![A2A Protocol 1.0](https://img.shields.io/badge/A2A-1.0_JSON--RPC-blue)](https://a2a-protocol.org/latest/)
 [![MCP](https://img.shields.io/badge/MCP-tools-green)](https://modelcontextprotocol.io/)
@@ -6,7 +6,7 @@
 
 [English version / Английская версия](README.md)
 
-Agent Bridge — легковесный локальный мост взаимодействия, объединяющий автономные агентные среды разработки (**Codex**, **Antigravity**, **OpenCode** и **Claude Code**) по протоколам [A2A (Agent-to-Agent) 1.0 JSON-RPC](https://a2a-protocol.org/latest/) и [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+Agent Shuttle даёт Python-приложениям единый способ работать с **Codex**, **Antigravity**, **OpenCode** и **Claude Code**. Библиотека запускает локальные задачи агентов, сохраняет многошаговые сессии и предоставляет доступ через [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) и [MCP](https://modelcontextprotocol.io/).
 
 Библиотека позволяет агентам и внешним программам делегировать задачи агентам-партнерам, повторно использовать контекст многошаговых бесед, запрашивать актуальные каталоги моделей и квоты аккаунтов, а также разграничивать политики доступа к инструментам — исключительно на локальном интерфейсе (`127.0.0.1`) без передачи облачных API-ключей.
 
@@ -25,7 +25,7 @@ Agent Bridge — легковесный локальный мост взаимо
 
 ## Установка
 
-Agent Bridge требует **Python 3.11+** и работает на Windows, Linux и macOS.
+Agent Shuttle требует **Python 3.11+** и работает на Windows, Linux и macOS.
 
 ### Установка из локального чекаута
 
@@ -37,12 +37,12 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # Установка в стандартном или редактируемом режиме
-pip install C:\path\to\agent-bridge
+pip install C:\path\to\agent-shuttle
 # или редактируемый режим для разработки:
-# pip install -e C:\path\to\agent-bridge
+# pip install -e C:\path\to\agent-shuttle
 ```
 
-После установки консольные утилиты (`agent-bridge`, `agent-bridge-mcp`) и Python API (`agent_bridge`) становятся доступны в этом окружении. Исходный каталог репозитория для последующей работы клиентских проектов не требуется.
+После установки консольные утилиты (`agent-shuttle`, `agent-shuttle-mcp`) и Python API (`agent_shuttle`) становятся доступны в этом окружении. Исходный каталог репозитория для последующей работы клиентских проектов не требуется. Старые импорты `agent_bridge` и команды `agent-bridge` сохранены как совместимые алиасы; ключи метаданных A2A `agent_bridge.*` не меняются.
 
 ---
 
@@ -52,19 +52,19 @@ pip install C:\path\to\agent-bridge
 
 1. **Инициализация окружения:**
    ```powershell
-   & .\Install.ps1
+   & .\Install-Shuttle.ps1
    ```
    *(Если Python 3.11+ не добавлен в `PATH`, предварительно задайте `$env:BRIDGE_BOOTSTRAP_PYTHON = 'C:\path\to\python.exe'`).*
 
 2. **Генерация конфигураций MCP:**
    ```powershell
-   & .\Configure-Mcp.ps1
+   & .\Configure-Shuttle-Mcp.ps1
    ```
    Скрипт создаст файлы `.codex/config.toml` и `.agents/mcp_config.json` с абсолютными путями к Python-окружению.
 
 3. **Запуск стандартных серверов Codex и Antigravity:**
    ```powershell
-   & .\Start-Bridge.ps1
+   & .\Start-Shuttle.ps1
    ```
    Скрипт запустит фоновые серверы на портах loopback:
    - Codex: `http://127.0.0.1:8765` (agent card: `http://127.0.0.1:8765/.well-known/agent-card.json`)
@@ -72,7 +72,7 @@ pip install C:\path\to\agent-bridge
 
 4. **Остановка фоновых серверов:**
    ```powershell
-   & .\Stop-Bridge.ps1
+   & .\Stop-Shuttle.ps1
    ```
 
 Логи выполнения и PID-файлы сохраняются в каталоге `.runtime/` и исключены из Git.
@@ -86,10 +86,10 @@ pip install C:\path\to\agent-bridge
 ```python
 import asyncio
 from pathlib import Path
-from agent_bridge import BridgeClient, HarnessLaunch, connect_harness
+from agent_shuttle import ShuttleClient, HarnessLaunch, connect_harness
 
 async def main():
-    client = BridgeClient()
+    client = ShuttleClient()
 
     # Запрос каталога моделей и информации о квотах в реальном времени
     info = await client.info("http://127.0.0.1:8766")
@@ -131,30 +131,30 @@ asyncio.run(main())
 
 ```powershell
 # Поиск локально установленных харнессов без запуска моделей
-agent-bridge discover
+agent-shuttle discover
 
 # Запуск A2A-сервера для Codex
-agent-bridge serve codex --workspace . --port 8765
+agent-shuttle serve codex --workspace . --port 8765
 
 # Запуск A2A-сервера для Antigravity (в режиме CLI)
-agent-bridge serve antigravity --workspace . --port 8766
+agent-shuttle serve antigravity --workspace . --port 8766
 
 # Запуск A2A-сервера из профиля (OpenCode или Claude Code)
-agent-bridge serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
+agent-shuttle serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
 
 # Запрос возможностей сервера, каталога моделей и лимитов квот
-agent-bridge info http://127.0.0.1:8765
+agent-shuttle info http://127.0.0.1:8765
 
 # Отправка задачи из командной строки
-agent-bridge ask http://127.0.0.1:8765 "Сделай краткое резюме последних изменений" --model gpt-5.6-terra
+agent-shuttle ask http://127.0.0.1:8765 "Сделай краткое резюме последних изменений" --model gpt-5.6-terra
 ```
 
 ### 3. Model Context Protocol (MCP)
 
 Запуск stdio-сервера MCP:
 ```powershell
-agent-bridge-mcp
-# или: python -m agent_bridge.mcp_server
+agent-shuttle-mcp
+# или: python -m agent_shuttle.mcp_server
 ```
 
 Доступные инструменты MCP:
@@ -169,7 +169,7 @@ agent-bridge-mcp
 ## Ключевые концепции
 
 ### Обнаружение харнессов (Discovery)
-Команда `agent-bridge discover` (или вызов `discover_harnesses()` в Python) проверяет установленные исполняемые файлы без старта процессов и загрузки весов. Проверяется переменная `PATH` и стандартные каталоги установки операционной системы (`%LOCALAPPDATA%\agy\bin`, глобальные пути npm и т.д.). Пути можно переопределить переменными окружения (`BRIDGE_AGY_COMMAND`) или флагами CLI (`--agy-command`, `--opencode-command`, `--claude-command`).
+Команда `agent-shuttle discover` (или вызов `discover_harnesses()` в Python) проверяет установленные исполняемые файлы без старта процессов и загрузки весов. Проверяется переменная `PATH` и стандартные каталоги установки операционной системы (`%LOCALAPPDATA%\agy\bin`, глобальные пути npm и т.д.). Пути можно переопределить переменными окружения (`BRIDGE_AGY_COMMAND`) или флагами CLI (`--agy-command`, `--opencode-command`, `--claude-command`).
 
 ### Выбор модели и уровня рассуждений (Reasoning Effort)
 Параметры передаются через метаданные A2A (`agent_bridge.model`, `agent_bridge.reasoning_effort`):
@@ -183,7 +183,7 @@ agent-bridge-mcp
 - **Сессии:** Объект `BridgeSession` поддерживает непрерывную беседу на протяжении нескольких вызовов `ask()`. Параметры сессии (модель, reasoning effort, политика инструментов) фиксируются при открытии и не могут изменяться между шагами. Неактивные сессии автоматически закрываются через 30 минут бездействия.
 
 ### Безопасность и политики инструментов (Tool Policies)
-Agent Bridge определяет четыре стандартные политики инструментов:
+Agent Shuttle определяет четыре стандартные политики инструментов:
 - `no_tools`: Полный запрет вызова инструментов.
 - `read_only`: Разрешены операции поиска и чтения файлов без модификации.
 - `workspace_write`: Разрешена модификация файлов внутри рабочего каталога.
@@ -196,7 +196,7 @@ Agent Bridge определяет четыре стандартные полит
 
 ## Тестирование
 
-Agent Bridge содержит полный набор офлайн-тестов на базе имитационных (fake) бэкендов, не требующих доступа к сети, учетных записей или расхода квот:
+Agent Shuttle содержит полный набор офлайн-тестов на базе имитационных (fake) бэкендов, не требующих доступа к сети, учетных записей или расхода квот:
 
 ```powershell
 python -m unittest discover -s tests -v

@@ -1,18 +1,18 @@
-# Agent Bridge API Reference
+# Agent Shuttle API Reference
 
 [Russian version / Русская версия](ru/api.md)
 
-This document provides a comprehensive reference for the unified public Python API, HTTP endpoints, CLI commands, and Model Context Protocol (MCP) tools provided by Agent Bridge.
+This document provides a comprehensive reference for the unified public Python API, HTTP endpoints, CLI commands, and Model Context Protocol (MCP) tools provided by Agent Shuttle.
 
 ---
 
 ## Python API Reference
 
-Import public symbols directly from `agent_bridge`:
+Import public symbols directly from `agent_shuttle`:
 
 ```python
-from agent_bridge import (
-    BridgeClient,
+from agent_shuttle import (
+    ShuttleClient,
     BridgeResult,
     BridgeSession,
     HarnessLaunch,
@@ -27,12 +27,12 @@ from agent_bridge import (
 )
 ```
 
-### `BridgeClient`
+### `ShuttleClient`
 
 The primary client for querying and dispatching tasks to any A2A 1.x server.
 
 ```python
-client = BridgeClient(timeout_seconds: float = 1800)
+client = ShuttleClient(timeout_seconds: float = 1800)
 ```
 
 #### Methods
@@ -133,7 +133,7 @@ launch = HarnessLaunch(name="antigravity", url="http://127.0.0.1:8766", workspac
 async with connect_harness(launch) as connection:
     # connection.url is ready
     # connection.started is True if a temporary server was spawned
-    result = await BridgeClient().ask(connection.url, "Run lint checks")
+    result = await ShuttleClient().ask(connection.url, "Run lint checks")
 ```
 
 On exit, temporary servers and their process trees are reliably killed (using `taskkill /PID ... /T /F` on Windows).
@@ -180,7 +180,7 @@ Exception raised when the Antigravity CLI cannot access its account from the Bri
 
 ## HTTP Endpoints Reference
 
-Every Agent Bridge A2A server exposes the following endpoints on loopback (`127.0.0.1`):
+Every Agent Shuttle A2A server exposes the following endpoints on loopback (`127.0.0.1`):
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -196,48 +196,48 @@ Every Agent Bridge A2A server exposes the following endpoints on loopback (`127.
 
 ## Command-Line Interface (CLI)
 
-The CLI entry point is `agent-bridge` (or `python -m agent_bridge.cli`).
+The CLI entry point is `agent-shuttle` (or `python -m agent_shuttle`). Legacy `BridgeClient`, `agent_bridge`, and `agent-bridge` names remain available.
 
-### `agent-bridge serve`
+### `agent-shuttle serve`
 
 Starts an A2A server:
 
 ```powershell
 # Serve Codex
-agent-bridge serve codex --port 8765 [--workspace <DIR>]
+agent-shuttle serve codex --port 8765 [--workspace <DIR>]
 
 # Serve Antigravity CLI
-agent-bridge serve antigravity --port 8766 [--workspace <DIR>] `
+agent-shuttle serve antigravity --port 8766 [--workspace <DIR>] `
   [--agy-command <PATH>] `
   [--agy-turn-timeout-seconds 300] `
   [--agy-dangerously-skip-permissions]
 
 # Serve OpenCode or Claude Code from a profile
-agent-bridge serve profile --profile .\profile.json --port 8767 [--workspace <DIR>]
+agent-shuttle serve profile --profile .\profile.json --port 8767 [--workspace <DIR>]
 ```
 
-### `agent-bridge ask`
+### `agent-shuttle ask`
 
 Sends a text prompt:
 ```powershell
-agent-bridge ask <URL> "<PROMPT>" `
+agent-shuttle ask <URL> "<PROMPT>" `
   [--model <MODEL>] `
   [--reasoning-effort <EFFORT>] `
   [--tool-policy <no_tools|read_only|workspace_write|full_access>]
 ```
 
-### `agent-bridge info`
+### `agent-shuttle info`
 
 Fetches and pretty-prints JSON capabilities and quota from `<URL>`:
 ```powershell
-agent-bridge info http://127.0.0.1:8765
+agent-shuttle info http://127.0.0.1:8765
 ```
 
-### `agent-bridge discover`
+### `agent-shuttle discover`
 
 Lists locally discovered harnesses:
 ```powershell
-agent-bridge discover `
+agent-shuttle discover `
   [--agy-command <PATH>] `
   [--opencode-command <PATH>] `
   [--claude-command <PATH>]
@@ -249,8 +249,8 @@ agent-bridge discover `
 
 The MCP server runs over standard I/O:
 ```powershell
-agent-bridge-mcp
-# or: python -m agent_bridge.mcp_server
+agent-shuttle-mcp
+# or: python -m agent_shuttle.mcp_server
 ```
 
 ### Environment Configuration

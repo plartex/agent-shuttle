@@ -15,7 +15,7 @@ class DiscoveryTests(unittest.TestCase):
         with patch("agent_bridge.discovery.shutil.which", side_effect=which), \
              patch("agent_bridge.discovery.importlib.util.find_spec", return_value=object()):
             found = discover_harnesses({"opencode": "custom-open"})
-        self.assertEqual(found["codex"], "agent-bridge")
+        self.assertEqual(found["codex"], "agent-shuttle")
         self.assertEqual(found["antigravity"], "/bin/agy")
         self.assertEqual(found["opencode"], "/bin/custom-open")
 
@@ -35,7 +35,7 @@ class DiscoveryTests(unittest.TestCase):
         with patch("agent_bridge.discovery.shutil.which", return_value=None), \
              patch("agent_bridge.discovery.Path.is_file", side_effect=PermissionError("denied")), \
              patch("agent_bridge.discovery.importlib.util.find_spec", return_value=object()):
-            self.assertEqual(discover_harnesses(), {"codex": "agent-bridge"})
+            self.assertEqual(discover_harnesses(), {"codex": "agent-shuttle"})
 
     def test_antigravity_is_found_in_source_checkout_bin(self):
         bundled = Path(discovery.__file__).resolve().parent.parent / "bin" / "agy.exe"

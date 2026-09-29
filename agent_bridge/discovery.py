@@ -19,7 +19,7 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
     """Return available harnesses and launch commands.
 
     Explicit commands override PATH discovery. Codex is provided by the
-    installed openai-codex SDK, so its value is the ``agent-bridge`` backend.
+    installed openai-codex SDK, so its value is the ``agent-shuttle`` backend.
     This function never contacts a model or changes local state.
     """
     overrides = commands or {}
@@ -28,7 +28,7 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
         raise ValueError(f"Unknown harnesses: {', '.join(sorted(unknown))}")
     result: dict[str, str] = {}
     if importlib.util.find_spec("openai_codex") is not None:
-        result["codex"] = "agent-bridge"
+        result["codex"] = "agent-shuttle"
     for name, default in (("antigravity", "agy"), ("opencode", "opencode"),
                           ("claude_code", "claude")):
         environment_command = os.environ.get("BRIDGE_AGY_COMMAND") if name == "antigravity" else None

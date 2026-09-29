@@ -20,7 +20,7 @@ from .registry import build_profile
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="agent-bridge")
+    parser = argparse.ArgumentParser(prog="agent-shuttle")
     sub = parser.add_subparsers(dest="command", required=True)
     serve = sub.add_parser("serve", help="Expose a local agent profile through A2A")
     serve.add_argument("agent", choices=["codex", "antigravity", "profile"])

@@ -1,4 +1,4 @@
-# Agent Bridge
+# Agent Shuttle
 
 [![A2A Protocol 1.0](https://img.shields.io/badge/A2A-1.0_JSON--RPC-blue)](https://a2a-protocol.org/latest/)
 [![MCP](https://img.shields.io/badge/MCP-tools-green)](https://modelcontextprotocol.io/)
@@ -6,7 +6,7 @@
 
 [Russian version / Русская версия](README.ru.md)
 
-Agent Bridge is a lightweight local interoperability bridge that connects autonomous coding agent harnesses—**Codex**, **Antigravity**, **OpenCode**, and **Claude Code**—over the [A2A (Agent-to-Agent) 1.0 JSON-RPC protocol](https://a2a-protocol.org/latest/) and [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+Agent Shuttle gives Python applications one way to work with **Codex**, **Antigravity**, **OpenCode**, and **Claude Code**. It runs local agent tasks, preserves multi-turn sessions, and exposes the agents through [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) and [MCP](https://modelcontextprotocol.io/).
 
 It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and enforce tool permission boundaries—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
 
@@ -25,11 +25,11 @@ It allows agents and external applications to delegate tasks to peer agents, reu
 
 ## Installation
 
-Agent Bridge requires **Python 3.11+** and runs on Windows, Linux, and macOS.
+Agent Shuttle requires **Python 3.11+** and runs on Windows, Linux, and macOS.
 
 ### Install from Local Checkout
 
-You can install Agent Bridge directly from its repository checkout into your project's virtual environment:
+You can install Agent Shuttle directly from its repository checkout into your project's virtual environment:
 
 ```powershell
 # Create and activate your virtual environment
@@ -37,12 +37,12 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # Install in standard or editable mode
-pip install C:\path\to\agent-bridge
+pip install C:\path\to\agent-shuttle
 # or editable mode during development:
-# pip install -e C:\path\to\agent-bridge
+# pip install -e C:\path\to\agent-shuttle
 ```
 
-Once installed, the CLI tools (`agent-bridge`, `agent-bridge-mcp`) and Python API (`agent_bridge`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports.
+Once installed, the CLI tools (`agent-shuttle`, `agent-shuttle-mcp`) and Python API (`agent_shuttle`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports. Existing `agent_bridge` imports and `agent-bridge` commands remain supported as compatibility aliases; A2A metadata keys under `agent_bridge.*` are unchanged.
 
 ---
 
@@ -52,19 +52,19 @@ For standalone development and testing inside this repository:
 
 1. **Bootstrap dependencies:**
    ```powershell
-   & .\Install.ps1
+   & .\Install-Shuttle.ps1
    ```
    *(If Python 3.11+ is not on `PATH`, set `$env:BRIDGE_BOOTSTRAP_PYTHON = 'C:\path\to\python.exe'` beforehand).*
 
 2. **Generate MCP configuration files:**
    ```powershell
-   & .\Configure-Mcp.ps1
+   & .\Configure-Shuttle-Mcp.ps1
    ```
    This creates `.codex/config.toml` and `.agents/mcp_config.json` with absolute paths to the environment.
 
 3. **Start default Codex and Antigravity bridge servers:**
    ```powershell
-   & .\Start-Bridge.ps1
+   & .\Start-Shuttle.ps1
    ```
    This starts background servers on loopback ports:
    - Codex: `http://127.0.0.1:8765` (agent card: `http://127.0.0.1:8765/.well-known/agent-card.json`)
@@ -72,7 +72,7 @@ For standalone development and testing inside this repository:
 
 4. **Stop background servers:**
    ```powershell
-   & .\Stop-Bridge.ps1
+   & .\Stop-Shuttle.ps1
    ```
 
 Runtime logs and process ID files are stored in `.runtime/` and ignored by version control.
@@ -86,10 +86,10 @@ Runtime logs and process ID files are stored in `.runtime/` and ignored by versi
 ```python
 import asyncio
 from pathlib import Path
-from agent_bridge import BridgeClient, HarnessLaunch, connect_harness
+from agent_shuttle import ShuttleClient, HarnessLaunch, connect_harness
 
 async def main():
-    client = BridgeClient()
+    client = ShuttleClient()
 
     # Query live model catalog and quota information
     info = await client.info("http://127.0.0.1:8766")
@@ -131,30 +131,30 @@ asyncio.run(main())
 
 ```powershell
 # Discover locally installed harnesses without starting models
-agent-bridge discover
+agent-shuttle discover
 
 # Start an A2A server for Codex
-agent-bridge serve codex --workspace . --port 8765
+agent-shuttle serve codex --workspace . --port 8765
 
 # Start an A2A server for Antigravity (CLI mode)
-agent-bridge serve antigravity --workspace . --port 8766
+agent-shuttle serve antigravity --workspace . --port 8766
 
 # Start an A2A server from a profile (OpenCode or Claude Code)
-agent-bridge serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
+agent-shuttle serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
 
 # Query server capabilities, models, and quota limits
-agent-bridge info http://127.0.0.1:8765
+agent-shuttle info http://127.0.0.1:8765
 
 # Send a task from the command line
-agent-bridge ask http://127.0.0.1:8765 "Summarize recent changes" --model gpt-5.6-terra
+agent-shuttle ask http://127.0.0.1:8765 "Summarize recent changes" --model gpt-5.6-terra
 ```
 
 ### 3. Model Context Protocol (MCP)
 
 Start the stdio MCP server:
 ```powershell
-agent-bridge-mcp
-# or: python -m agent_bridge.mcp_server
+agent-shuttle-mcp
+# or: python -m agent_shuttle.mcp_server
 ```
 
 Available MCP tools:
@@ -169,7 +169,7 @@ Available MCP tools:
 ## Key Concepts
 
 ### Harness Discovery
-Run `agent-bridge discover` (or `discover_harnesses()` in Python) to inspect local executables without launching processes or loading weights. It checks `PATH` and platform-specific standard installation directories (`%LOCALAPPDATA%\agy\bin`, npm global directories, etc.). Custom paths can be specified via environment variables (`BRIDGE_AGY_COMMAND`) or CLI flags (`--agy-command`, `--opencode-command`, `--claude-command`).
+Run `agent-shuttle discover` (or `discover_harnesses()` in Python) to inspect local executables without launching processes or loading weights. It checks `PATH` and platform-specific standard installation directories (`%LOCALAPPDATA%\agy\bin`, npm global directories, etc.). Custom paths can be specified via environment variables (`BRIDGE_AGY_COMMAND`) or CLI flags (`--agy-command`, `--opencode-command`, `--claude-command`).
 
 ### Model & Reasoning Selection
 Model parameters are passed as A2A metadata keys (`agent_bridge.model`, `agent_bridge.reasoning_effort`):
@@ -183,7 +183,7 @@ Model parameters are passed as A2A metadata keys (`agent_bridge.model`, `agent_b
 - **Sessions:** `BridgeSession` maintains a stateful conversation across multiple `ask()` calls. Conversation settings (model, effort, tool policy) are pinned at session creation and cannot be changed mid-session. Idle sessions are cleaned up automatically after 30 minutes.
 
 ### Safety & Tool Policies
-Agent Bridge defines four standardized tool policies:
+Agent Shuttle defines four standardized tool policies:
 - `no_tools`: Disables tool invocations entirely.
 - `read_only`: Permits non-mutating search and file reading.
 - `workspace_write`: Allows editing files within the designated workspace.
@@ -196,7 +196,7 @@ Agent Bridge defines four standardized tool policies:
 
 ## Testing
 
-Agent Bridge provides a comprehensive offline test suite using fake backends that execute without network access, credentials, or model quota consumption:
+Agent Shuttle provides a comprehensive offline test suite using fake backends that execute without network access, credentials, or model quota consumption:
 
 ```powershell
 python -m unittest discover -s tests -v

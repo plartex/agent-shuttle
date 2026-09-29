@@ -31,7 +31,7 @@ _BACKENDS = {
 def _trace(stage: str) -> None:
     if os.environ.get("BRIDGE_DEBUG") == "1":
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        print(f"[agent-bridge] {stamp} managed: {stage}", file=sys.stderr, flush=True)
+        print(f"[agent-shuttle] {stamp} managed: {stage}", file=sys.stderr, flush=True)
 
 
 async def _stop_process_tree(process: subprocess.Popen) -> None:
