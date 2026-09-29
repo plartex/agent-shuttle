@@ -9,6 +9,7 @@ from unittest.mock import patch
 from openai_codex.generated.v2_all import RateLimitResetType
 from starlette.responses import JSONResponse
 
+from agent_bridge.backends import AntigravityAuthenticationError
 from agent_bridge.info import AntigravityCliInfo, AntigravitySdkInfo, CodexInfo
 
 
@@ -129,6 +130,19 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
             with patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=FakeProcess(error)):
                 with self.assertRaisesRegex(RuntimeError, "no account"):
                     await info._read("models")
+
+    async def test_cli_metadata_reports_inaccessible_auth_context(self):
+        class AuthFailure(FakeProcess):
+            async def communicate(self):
+                return b"", (
+                    b"You are not logged into Antigravity.\n"
+                    b"Failed to write .gemini/antigravity-cli/mcp/cache: Access is denied."
+                )
+
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=AuthFailure(b"", 1)):
+            with self.assertRaisesRegex(AntigravityAuthenticationError, "outside the caller's sandbox"):
+                await AntigravityCliInfo(Path(folder))._read("models")
 
     async def test_sdk_info_explicitly_marks_unavailable(self):
         result = await AntigravitySdkInfo().fetch()

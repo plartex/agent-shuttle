@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from typing import Protocol
 
+from .backends import _agy_authentication_error
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -74,6 +76,9 @@ class AntigravityCliInfo:
             await process.wait()
             raise
         if process.returncode:
+            authentication_error = _agy_authentication_error(stderr)
+            if authentication_error is not None:
+                raise authentication_error
             raise RuntimeError(
                 f"agy info failed ({process.returncode}): {stderr.decode(errors='replace')[-2000:]}"
             )

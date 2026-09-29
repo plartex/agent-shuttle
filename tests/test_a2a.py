@@ -1,4 +1,5 @@
 import asyncio
+import os
 import socket
 import tempfile
 import unittest
@@ -115,6 +116,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 response = await http.get("/bridge/identity")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["backend"], "agy_cli")
+            self.assertEqual(response.json()["pid"], os.getpid())
             self.assertEqual(response.json()["workspace"], str(Path(folder).resolve()))
             self.assertEqual(response.json()["agy_permission_mode"], "all")
             self.assertEqual(response.json()["agy_turn_timeout_seconds"], 300)
