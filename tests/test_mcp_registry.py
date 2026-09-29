@@ -1,6 +1,8 @@
 import json
 import os
 import unittest
+from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +11,61 @@ from agent_bridge.mcp_server import ask_codex, ask_antigravity, get_codex_info, 
 
 
 class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_antigravity_can_start_temporary_workspace_server(self):
+        @asynccontextmanager
+        async def connected(launch):
+            self.assertEqual(launch.name, "antigravity")
+            self.assertEqual(launch.workspace, Path.cwd())
+            self.assertEqual(launch.tool_policy, "full_access")
+            self.assertEqual(launch.agy_turn_timeout_seconds, 45)
+            yield SimpleNamespace(url=launch.url)
+
+        result = SimpleNamespace(task_id="1", context_id=None, state="done", text="ok",
+                                 usage=None, details=None)
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("agent_bridge.mcp_server.connect_harness", connected), \
+             patch("agent_bridge.mcp_server._free_local_url",
+                   return_value="http://127.0.0.1:49152"), \
+             patch("agent_bridge.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+                   return_value=result) as ask:
+            answer = await ask_antigravity(
+                "task", model="gemini-3.8-flash-medium",
+                workspace=str(Path.cwd()), tool_policy="full_access",
+                turn_timeout_seconds=45,
+            )
+        self.assertEqual(answer["text"], "ok")
+        self.assertEqual(ask.call_args.args[:2], ("http://127.0.0.1:49152", "task"))
+        self.assertEqual(ask.call_args.kwargs["tool_policy"], "full_access")
+
+    async def test_antigravity_uses_configured_default_workspace(self):
+        with patch.dict(os.environ, {"BRIDGE_ANTIGRAVITY_WORKSPACE": str(Path.cwd())}), \
+             patch("agent_bridge.mcp_server._managed_antigravity", new_callable=AsyncMock,
+                   return_value={"text": "ok"}) as managed:
+            answer = await ask_antigravity("task")
+        self.assertEqual(answer["text"], "ok")
+        self.assertEqual(managed.call_args.args[1], str(Path.cwd()))
+
+    async def test_custom_turn_timeout_requires_managed_workspace(self):
+        with patch.dict(os.environ, {"BRIDGE_ANTIGRAVITY_URL": "http://127.0.0.1:8766"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "managed Antigravity workspace"):
+                await ask_antigravity("task", turn_timeout_seconds=45)
+
+    async def test_antigravity_info_starts_temporary_workspace_server(self):
+        @asynccontextmanager
+        async def connected(launch):
+            self.assertEqual(launch.workspace, Path.cwd())
+            self.assertIsNone(launch.tool_policy)
+            yield SimpleNamespace(url=launch.url)
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("agent_bridge.mcp_server.connect_harness", connected), \
+             patch("agent_bridge.mcp_server._free_local_url",
+                   return_value="http://127.0.0.1:49153"), \
+             patch("agent_bridge.mcp_server.BridgeClient.info", new_callable=AsyncMock,
+                   return_value={"agent": "antigravity"}) as info:
+            result = await get_antigravity_info(workspace=str(Path.cwd()))
+        self.assertEqual(result["agent"], "antigravity")
+        info.assert_awaited_once_with("http://127.0.0.1:49153")
     async def test_generic_agent_tool_routes_configured_profile(self):
         result = SimpleNamespace(task_id="1", context_id=None, state="done", text="ok",
                                  usage={"input_tokens": 2}, details={"cache_status": "unknown"})

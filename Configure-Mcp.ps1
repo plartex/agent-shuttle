@@ -10,6 +10,7 @@ $agentsDir = Join-Path $root '.agents'
 New-Item -ItemType Directory -Path $codexDir, $agentsDir -Force | Out-Null
 
 $tomlPath = $python.Replace("'", "''")
+$tomlRoot = $root.Replace("'", "''")
 $toml = @"
 [mcp_servers.agent_bridge]
 command = '$tomlPath'
@@ -19,6 +20,7 @@ tool_timeout_sec = 1800
 [mcp_servers.agent_bridge.env]
 BRIDGE_CODEX_URL = "http://127.0.0.1:8765"
 BRIDGE_ANTIGRAVITY_URL = "http://127.0.0.1:8766"
+BRIDGE_ANTIGRAVITY_WORKSPACE = '$tomlRoot'
 "@
 Set-Content -LiteralPath (Join-Path $codexDir 'config.toml') -Value $toml -Encoding utf8
 
@@ -30,6 +32,7 @@ $json = @{
             env = @{
                 BRIDGE_CODEX_URL = 'http://127.0.0.1:8765'
                 BRIDGE_ANTIGRAVITY_URL = 'http://127.0.0.1:8766'
+                BRIDGE_ANTIGRAVITY_WORKSPACE = $root
             }
         }
     }
