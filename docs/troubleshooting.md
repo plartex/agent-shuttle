@@ -27,6 +27,12 @@ Invoke-RestMethod http://127.0.0.1:8766/bridge/identity
 
 ---
 
+### Authentication belongs to the CLI process, not the desktop app
+
+`AntigravityAuthenticationError` means `agy` could not use its account in the context where Bridge launched it. If the diagnostic mentions `Access is denied` under `.gemini/antigravity-cli`, a restricted or sandboxed launcher is a likely cause; it does **not** prove that the user is signed out. Check with `agy models` in an ordinary terminal under the same Windows account. If that succeeds, start `Start-Bridge.ps1` from that terminal rather than from a sandboxed executor, and retry the task. If it also fails, start `agy` interactively and complete its sign-in flow. Do not copy credentials into the project or disable sandboxing globally.
+
+---
+
 ### 2. Antigravity Soft Denials (`AntigravityPermissionDenied`)
 
 **Symptom:**  
@@ -68,7 +74,7 @@ Diagnostic logs show preflight retry warnings: `eligibility check failed ... tls
 During authentication initialization, `agy` occasionally experiences temporary TLS handshake timeouts when fetching user profile metadata before the agent turn begins.
 
 **Resolution:**  
-Agent Bridge detects this specific retryable error pattern and automatically retries the invocation up to 3 times with exponential backoff before reporting a failure. If failures persist, verify your internet connection and re-run `agy auth`.
+Agent Bridge detects this specific retryable error pattern and automatically retries the invocation up to 3 times with exponential backoff before reporting a failure. If failures persist, verify your internet connection and run `agy` interactively to refresh its sign-in if needed.
 
 ---
 

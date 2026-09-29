@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent_bridge.backends import (
-    AntigravityCliBackend, AntigravitySdkBackend, CodexBackend,
+    AntigravityAuthenticationError, AntigravityCliBackend,
+    AntigravitySdkBackend, CodexBackend,
     _AntigravityCliSession, _decode_agy_result, _decode_agy_usage,
 )
 
@@ -99,6 +100,72 @@ class _FakeProcess:
 
 
 class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_exit_after_prompt_reports_auth_failure(self):
+        process = _FakeProcess([])
+        process.stderr = asyncio.StreamReader()
+        process.stderr.feed_data(b"You are not logged into Antigravity. Access is denied.")
+        process.stderr.feed_eof()
+        session = _AntigravityCliSession(process)
+        try:
+            with self.assertRaises(AntigravityAuthenticationError):
+                await session.ask("hello")
+        finally:
+            await session.close()
+
+    async def test_stream_exit_after_prompt_preserves_other_error(self):
+        process = _FakeProcess([])
+        process.stderr = asyncio.StreamReader()
+        process.stderr.feed_data(b"model unavailable")
+        process.stderr.feed_eof()
+        session = _AntigravityCliSession(process)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "model unavailable"):
+                await session.ask("hello")
+        finally:
+            await session.close()
+
+    async def test_stream_rejects_invalid_json_and_failed_result(self):
+        bad_json = _FakeProcess([])
+        bad_json.stdout = asyncio.StreamReader()
+        bad_json.stdout.feed_data(b"not-json\n")
+        bad_json.stdout.feed_eof()
+        session = _AntigravityCliSession(bad_json)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "invalid JSON"):
+                await session.ask("hello")
+        finally:
+            await session.close()
+
+        failed = _FakeProcess([{"event": "result", "result": {"status": "ERROR", "error": "model unavailable"}}])
+        session = _AntigravityCliSession(failed)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "model unavailable"):
+                await session.ask("hello")
+        finally:
+            await session.close()
+
+    async def test_stream_rejects_empty_success_response(self):
+        process = _FakeProcess([{"event": "result", "result": {"status": "SUCCESS", "response": ""}}])
+        session = _AntigravityCliSession(process)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "empty response"):
+                await session.ask("hello")
+        finally:
+            await session.close()
+
+    async def test_stream_auth_failure_reports_process_context(self):
+        process = _FakeProcess([])
+        process.returncode = 1
+        process.stderr = asyncio.StreamReader()
+        process.stderr.feed_data(b"You are not logged into Antigravity. Access is denied.")
+        process.stderr.feed_eof()
+        session = _AntigravityCliSession(process)
+        try:
+            with self.assertRaisesRegex(AntigravityAuthenticationError, "outside the caller's sandbox"):
+                await session.ask("hello")
+        finally:
+            await session.close()
+
     async def test_stream_turn_timeout_terminates_stalled_session(self):
         class StalledProcess(_FakeProcess):
             def __init__(self):
@@ -449,6 +516,41 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
         with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
             with self.assertRaisesRegex(RuntimeError, "bad model"):
                 await AntigravityCliBackend(Path.cwd()).run("hello")
+
+    async def test_antigravity_cli_auth_failure_is_actionable_and_not_retried(self):
+        class Process:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", (
+                    b"error getting token source: You are not logged into Antigravity.\n"
+                    b"Failed to write server states: open "
+                    b"C:/Users/test/.gemini/antigravity-cli/mcp/agent-bridge/ask_agent.json.tmp: "
+                    b"Access is denied.\n"
+                    b"Print mode: auth timed out\n"
+                    b"Error: authentication timed out."
+                )
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
+            with self.assertRaisesRegex(
+                AntigravityAuthenticationError,
+                "Antigravity CLI authentication",
+            ):
+                await AntigravityCliBackend(Path.cwd()).run("hello")
+        self.assertEqual(spawn.call_count, 1)
+
+    async def test_antigravity_cli_signed_out_is_distinct_from_sandbox_denial(self):
+        class Process:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"error getting token source: You are not logged into Antigravity."
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
+            with self.assertRaises(AntigravityAuthenticationError) as captured:
+                await AntigravityCliBackend(Path.cwd()).run("hello")
+        self.assertIn("Verify that the CLI is signed in", str(captured.exception))
+        self.assertNotIn("outside the caller's sandbox", str(captured.exception))
 
     async def test_antigravity_retries_only_preflight_tls_failure(self):
         class Process:

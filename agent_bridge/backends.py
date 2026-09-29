@@ -15,6 +15,31 @@ class AntigravityPermissionDenied(RuntimeError):
     """The CLI completed a turn without permission for a requested tool."""
 
 
+class AntigravityAuthenticationError(RuntimeError):
+    """The CLI cannot use its account from the current process context."""
+
+
+def _agy_authentication_error(stderr: bytes) -> AntigravityAuthenticationError | None:
+    message = stderr.decode(errors="replace").lower()
+    if not any(marker in message for marker in (
+        "you are not logged into antigravity",
+        "authentication failed or timed out",
+        "print mode: auth timed out",
+    )):
+        return None
+    if "access is denied" in message or "permission denied" in message:
+        return AntigravityAuthenticationError(
+            "Antigravity CLI authentication is unavailable in this process: "
+            "access to its credential store or configuration was denied. "
+            "Start Agent Bridge as a normal user outside the caller's sandbox; "
+            "a successful Antigravity desktop sign-in does not grant a sandboxed CLI access."
+        )
+    return AntigravityAuthenticationError(
+        "Antigravity CLI authentication is unavailable. Verify that the CLI is signed in "
+        "from the same user account and process context used to start Agent Bridge."
+    )
+
+
 def _retryable_agy_preflight_failure(stderr: bytes) -> bool:
     """Retry only a known failure before Antigravity starts the agent turn."""
     message = stderr.decode(errors="replace").lower()
@@ -313,6 +338,9 @@ class AntigravityCliBackend:
                 await process.wait()
                 raise
             if process.returncode:
+                authentication_error = _agy_authentication_error(stderr)
+                if authentication_error is not None:
+                    raise authentication_error
                 if attempt < 2 and _retryable_agy_preflight_failure(stderr):
                     await asyncio.sleep(min(0.5 * (attempt + 1), max(0, deadline - asyncio.get_running_loop().time())))
                     continue
@@ -388,6 +416,10 @@ class _AntigravityCliSession:
 
     async def _ask_within_deadline(self, prompt: str) -> BackendResponse:
         if self.process.returncode is not None:
+            await self.stderr_task
+            authentication_error = _agy_authentication_error(self.stderr_tail)
+            if authentication_error is not None:
+                raise authentication_error
             raise RuntimeError(f"agy session exited ({self.process.returncode}): {self.stderr_tail.decode(errors='replace')}")
         assert self.process.stdin is not None and self.process.stdout is not None
         event = {"event": "user", "message": {"content": prompt}}
@@ -417,6 +449,10 @@ class _AntigravityCliSession:
             }
             self.previous_usage = cumulative
             return BackendResponse(response, delta)
+        await self.stderr_task
+        authentication_error = _agy_authentication_error(self.stderr_tail)
+        if authentication_error is not None:
+            raise authentication_error
         raise RuntimeError(f"agy session closed before result: {self.stderr_tail.decode(errors='replace')}")
 
     async def close(self) -> None:

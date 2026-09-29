@@ -30,30 +30,60 @@ if ($env:BRIDGE_AGY_MODE -eq 'sdk') {
     $env:BRIDGE_AGY_COMMAND = $agyCommand
 }
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
+function Get-BridgeIdentity([int]$port) {
+    try {
+        return Invoke-RestMethod -Uri "http://127.0.0.1:$port/bridge/identity" -TimeoutSec 2 -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+function Assert-BridgeProcess($identity, [string]$agentName, [int]$port) {
+    $expectedBackend = if ($agentName -eq 'codex') { 'codex_app_server' } else { 'agy_cli' }
+    if ($identity.agent -ne $agentName -or $identity.backend -ne $expectedBackend -or
+        $identity.workspace -ne $bridgeRoot -or [int]$identity.pid -le 0) {
+        throw "Port $port has a Bridge with unexpected identity or workspace"
+    }
+    $listener = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.OwningProcess -eq [int]$identity.pid } | Select-Object -First 1
+    if (-not $listener) { throw "Port $port is not owned by Bridge PID $($identity.pid)" }
+    $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $($identity.pid)" -ErrorAction Stop
+    $pattern = "(?i)-m\s+agent_bridge\.cli\s+serve\s+$agentName\s+--port\s+$port(?:\s|$)"
+    if (-not $owner -or $owner.CommandLine -notmatch $pattern) {
+        throw "PID $($identity.pid) does not run the expected Agent Bridge command"
+    }
+}
 foreach ($agent in @(@{ Name = 'codex'; Port = 8765 }, @{ Name = 'antigravity'; Port = 8766 })) {
     $pidFile = Join-Path $runtime "$($agent.Name).pid"
-    if (Test-Path -LiteralPath $pidFile) {
-        $existingPid = [int](Get-Content -LiteralPath $pidFile -Raw)
-        $existingProcess = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
-        if ($existingProcess -and $existingProcess.Path -ne $python) {
-            throw "PID $existingPid in $pidFile is not Agent Bridge Python: $($existingProcess.Path)"
-        }
-        if ($existingProcess) {
-            Write-Output "$($agent.Name) already running (PID $existingPid)"
-            continue
-        }
+    $identity = Get-BridgeIdentity $agent.Port
+    if ($identity) {
+        Assert-BridgeProcess $identity $agent.Name $agent.Port
+        Set-Content -LiteralPath $pidFile -Value ([int]$identity.pid)
+        Write-Output "$($agent.Name) already running (PID $($identity.pid))"
+        continue
     }
+    $occupied = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $agent.Port -State Listen -ErrorAction SilentlyContinue
+    if ($occupied) { throw "Port $($agent.Port) is occupied by a non-Bridge process" }
     $launchArgs = @('-m', 'agent_bridge.cli', 'serve', $agent.Name, '--port', [string]$agent.Port)
     if ($agent.Name -eq 'antigravity') {
         if ($env:BRIDGE_AGY_MODE -eq 'sdk') {
             $launchArgs += @('--agy-mode', 'sdk')
         }
     }
-    $process = Start-Process -FilePath $python `
+    Start-Process -FilePath $python `
         -ArgumentList $launchArgs `
         -WorkingDirectory $bridgeRoot -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $runtime "$($agent.Name).out.log") `
-        -RedirectStandardError (Join-Path $runtime "$($agent.Name).err.log")
-    Set-Content -LiteralPath $pidFile -Value $process.Id
-    Write-Output "$($agent.Name): http://127.0.0.1:$($agent.Port) (PID $($process.Id))"
+        -RedirectStandardError (Join-Path $runtime "$($agent.Name).err.log") | Out-Null
+    $identity = $null
+    for ($attempt = 0; $attempt -lt 80 -and -not $identity; $attempt++) {
+        Start-Sleep -Milliseconds 250
+        $identity = Get-BridgeIdentity $agent.Port
+    }
+    if (-not $identity) {
+        $tail = Get-Content -LiteralPath (Join-Path $runtime "$($agent.Name).err.log") -Tail 20 -ErrorAction SilentlyContinue
+        throw "$($agent.Name) Bridge did not become ready on port $($agent.Port): $tail"
+    }
+    Assert-BridgeProcess $identity $agent.Name $agent.Port
+    Set-Content -LiteralPath $pidFile -Value ([int]$identity.pid)
+    Write-Output "$($agent.Name): http://127.0.0.1:$($agent.Port) (PID $($identity.pid))"
 }

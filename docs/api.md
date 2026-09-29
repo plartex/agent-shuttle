@@ -23,6 +23,7 @@ from agent_bridge import (
     build_profile,
     discover_harnesses,
     AntigravityPermissionDenied,
+    AntigravityAuthenticationError,
 )
 ```
 
@@ -53,7 +54,7 @@ client = BridgeClient(timeout_seconds: float = 1800)
   Returns a comprehensive snapshot including capabilities, model catalog, reasoning efforts, and live account quota buckets.
 
 - **`async def identity(peer_url: str) -> dict`**  
-  Lightweight check returning `agent`, `backend`, `workspace`, `read_only_tools`, `max_tool_policy`, `agy_permission_mode`, and `agy_turn_timeout_seconds`. Does **not** trigger expensive model or CLI queries.
+  Lightweight check returning `agent`, `backend`, the actual server `pid`, `workspace`, `read_only_tools`, `max_tool_policy`, `agy_permission_mode`, and `agy_turn_timeout_seconds`. Does **not** trigger expensive model or CLI queries.
 
 - **`async def capabilities(peer_url: str) -> dict`**  
   Returns model list, selected model, effort options, and tool policy limits.
@@ -170,6 +171,10 @@ Scans `PATH` and platform installation paths for installed executables (`codex`,
 ### `AntigravityPermissionDenied`
 
 Exception raised when Antigravity CLI reports `status: SUCCESS` but tool invocations were soft-denied by the user's permission settings.
+
+### `AntigravityAuthenticationError`
+
+Exception raised when the Antigravity CLI cannot access its account from the Bridge process. If the CLI also reports access denied for its configuration, run Bridge as the signed-in user outside the caller's sandbox.
 
 ---
 

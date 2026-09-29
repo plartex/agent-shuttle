@@ -23,6 +23,7 @@ from agent_bridge import (
     build_profile,
     discover_harnesses,
     AntigravityPermissionDenied,
+    AntigravityAuthenticationError,
 )
 ```
 
@@ -53,7 +54,7 @@ client = BridgeClient(timeout_seconds: float = 1800)
   Возвращает полный снимок: каталог моделей, уровни рассуждений и группы квот аккаунта в реальном времени.
 
 - **`async def identity(peer_url: str) -> dict`**  
-  Легковесный запрос идентификации: `agent`, `backend`, `workspace`, `read_only_tools`, `max_tool_policy`, `agy_permission_mode` и `agy_turn_timeout_seconds`. **Не запускает** исполняемые файлы моделей и CLI.
+  Легковесный запрос идентификации: `agent`, `backend`, фактический `pid` серверного процесса, `workspace`, `read_only_tools`, `max_tool_policy`, `agy_permission_mode` и `agy_turn_timeout_seconds`. **Не запускает** исполняемые файлы моделей и CLI.
 
 - **`async def capabilities(peer_url: str) -> dict`**  
   Возвращает список моделей, текущую выбранную модель, параметры рассуждений и предел политик инструментов.
@@ -170,6 +171,10 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
 ### `AntigravityPermissionDenied`
 
 Исключение, выбрасываемое в случае, если Antigravity CLI возвращает `status: SUCCESS`, но запрошенные инструменты были заблокированы политикой разрешений (soft denial).
+
+### `AntigravityAuthenticationError`
+
+Исключение означает, что Antigravity CLI не может получить доступ к своей учётной записи из процесса Bridge. Если CLI также сообщает об отказе доступа к своей конфигурации, запустите Bridge от имени вошедшего пользователя вне песочницы вызывающего процесса.
 
 ---
 

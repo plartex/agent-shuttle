@@ -15,7 +15,7 @@ Agent Bridge interacts with local coding harnesses on your workstation. Make sur
   - The Codex desktop or CLI app installed and signed in.
   - Python SDK dependency (`openai-codex`) is installed automatically by Agent Bridge.
 - For **Antigravity**:
-  - The official `agy` CLI installed and authenticated (`agy auth` or browser sign-in).
+  - The official `agy` CLI installed and authenticated (run `agy` interactively to sign in, then verify with `agy models`).
   - Test sign-in by running `agy models` in your terminal.
 - For **OpenCode** (optional):
   - `opencode` installed (e.g. via npm: `npm i -g opencode-ai`).

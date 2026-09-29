@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -278,7 +279,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                 "antigravity_sdk" if isinstance(backend, AntigravitySdkBackend) else name
             )
             workspace = getattr(backend, "workspace", None)
-        result = {"agent": name, "backend": backend_name}
+        result = {"agent": name, "backend": backend_name, "pid": os.getpid()}
         if isinstance(backend, ProfiledBackend):
             result["max_tool_policy"] = backend.profile.max_tool_policy.value
         if isinstance(workspace, Path):
