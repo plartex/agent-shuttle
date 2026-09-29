@@ -3,13 +3,13 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codex-antigravity-a2a-bridge"
-version = "0.4.0"
-description = "Local A2A bridge for Codex, Antigravity, OpenCode and Claude Code"
+name = "agent-shuttle"
+version = "0.5.0"
+description = "One Python interface for local coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Aleksandr Kovalenko" }]
-keywords = ["a2a", "mcp", "codex", "antigravity", "opencode", "claude-code", "agents"]
+keywords = ["agent-shuttle", "a2a", "mcp", "codex", "antigravity", "opencode", "claude-code", "agents"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",
@@ -34,9 +34,11 @@ Repository = "https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge.git"
 Issues = "https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge/-/issues"
 
 [project.scripts]
+agent-shuttle = "agent_shuttle.cli:main"
+agent-shuttle-mcp = "agent_shuttle.mcp_server:main"
 agent-bridge = "agent_bridge.cli:main"
 agent-bridge-mcp = "agent_bridge.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agent_bridge*"]
+include = ["agent_bridge*", "agent_shuttle*"]

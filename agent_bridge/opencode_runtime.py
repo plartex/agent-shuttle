@@ -51,7 +51,7 @@ def _inline_config(profile: AgentProfile, policy: ToolPolicy) -> str:
     permission = _permissions(policy)
     bridge_agent = {
         "mode": "primary",
-        "description": "Agent Bridge constrained analysis runtime",
+        "description": "Agent Shuttle constrained analysis runtime",
         "prompt": (
             "You are a concise analysis assistant. Answer the user's request directly. "
             "Do not call tools or ask for permissions."
@@ -206,7 +206,7 @@ class OpenCodeRuntime:
 
     async def open_session(self, selection: ProfileSelection) -> "OpenCodeSession":
         server = await self._server(selection.tool_policy)
-        response = await server.client.post("/session", json={"title": "Agent Bridge"})
+        response = await server.client.post("/session", json={"title": "Agent Shuttle"})
         response.raise_for_status()
         session_id = response.json().get("id")
         if not isinstance(session_id, str) or not session_id:

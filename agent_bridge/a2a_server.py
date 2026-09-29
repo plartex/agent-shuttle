@@ -253,7 +253,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
     card = AgentCard(
         name=f"{name.title()} local agent",
         description=(
-            f"Local {name} agent exposed through A2A by agent-bridge. "
+            f"Local {name} agent exposed through A2A by Agent Shuttle. "
             "Live models, reasoning efforts and account quotas are available at /bridge/info."
         ),
         version="0.1.0",

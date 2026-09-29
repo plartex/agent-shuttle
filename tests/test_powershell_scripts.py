@@ -10,9 +10,14 @@ class PowerShellScriptTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is not installed")
     def test_bridge_lifecycle_scripts_parse(self):
         root = Path(__file__).resolve().parents[1]
-        for name in ("Start-Bridge.ps1", "Stop-Bridge.ps1"):
+        for name in (
+            "Start-Bridge.ps1", "Stop-Bridge.ps1", "Install-Shuttle.ps1",
+            "Configure-Shuttle-Mcp.ps1", "Start-Shuttle.ps1", "Stop-Shuttle.ps1",
+        ):
             with self.subTest(name=name):
-                path = str(root / name).replace("'", "''")
+                script = root / name
+                self.assertTrue(script.is_file(), f"Missing {name}")
+                path = str(script).replace("'", "''")
                 command = (
                     "$tokens = $null; $errors = $null; "
                     f"[System.Management.Automation.Language.Parser]::ParseFile('{path}', "

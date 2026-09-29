@@ -31,12 +31,12 @@ def _agy_authentication_error(stderr: bytes) -> AntigravityAuthenticationError |
         return AntigravityAuthenticationError(
             "Antigravity CLI authentication is unavailable in this process: "
             "access to its credential store or configuration was denied. "
-            "Start Agent Bridge as a normal user outside the caller's sandbox; "
+            "Start Agent Shuttle as a normal user outside the caller's sandbox; "
             "a successful Antigravity desktop sign-in does not grant a sandboxed CLI access."
         )
     return AntigravityAuthenticationError(
         "Antigravity CLI authentication is unavailable. Verify that the CLI is signed in "
-        "from the same user account and process context used to start Agent Bridge."
+        "from the same user account and process context used to start Agent Shuttle."
     )
 
 

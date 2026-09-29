@@ -1,19 +1,19 @@
-# Начало работы с Agent Bridge
+# Начало работы с Agent Shuttle
 
 [English version / Английская версия](../getting-started.md)
 
-Это руководство описывает процесс первоначальной настройки Agent Bridge, проверку доступности локальных агентных сред (харнессов), запуск A2A- и MCP-серверов, а также отправку первых задач через Python, CLI и MCP.
+Это руководство описывает процесс первоначальной настройки Agent Shuttle, проверку доступности локальных агентных сред (харнессов), запуск A2A- и MCP-серверов, а также отправку первых задач через Python, CLI и MCP.
 
 ---
 
 ## Требования
 
-Agent Bridge взаимодействует с локальными агентными средами разработки на вашем компьютере. Убедитесь в наличии:
+Agent Shuttle взаимодействует с локальными агентными средами разработки на вашем компьютере. Убедитесь в наличии:
 
 - **Python 3.11 или новее**, установленный и доступный в `PATH`.
 - Для **Codex**:
   - Установленное и авторизованное приложение Codex (десктоп или CLI).
-  - Зависимость Python SDK (`openai-codex`) устанавливается автоматически вместе с Agent Bridge.
+  - Зависимость Python SDK (`openai-codex`) устанавливается автоматически вместе с Agent Shuttle.
 - Для **Antigravity**:
   - Установленный и авторизованный CLI `agy` (интерактивно войдите через `agy`, затем проверьте командой `agy models`).
   - Проверьте авторизацию командой `agy models` в терминале.
@@ -36,27 +36,29 @@ git clone https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge.git
 Set-Location codex-antigravity-a2a-bridge
 
 # 2. Инициализация виртуального окружения и установка зависимостей
-& .\Install.ps1
+& .\Install-Shuttle.ps1
 
 # 3. Создание конфигураций MCP для Codex и Antigravity
-& .\Configure-Mcp.ps1
+& .\Configure-Shuttle-Mcp.ps1
 
 # 4. Запуск фоновых серверов Codex (порт 8765) и Antigravity (порт 8766)
-& .\Start-Bridge.ps1
+& .\Start-Shuttle.ps1
 ```
+
+Адрес GitLab-репозитория и имя каталога чекаута пока прежние; устанавливаемый пакет и CLI называются Agent Shuttle.
 
 Для остановки серверов:
 ```powershell
-& .\Stop-Bridge.ps1
+& .\Stop-Shuttle.ps1
 ```
 
 Логи работы и PID-файлы сохраняются в каталоге `.runtime/` (`codex.out.log`, `codex.err.log`, `antigravity.out.log`, `antigravity.err.log`).
 
 ---
 
-## Использование Agent Bridge как библиотеки в другом проекте
+## Использование Agent Shuttle как библиотеки в другом проекте
 
-Вы можете установить Agent Bridge в любой другой Python-проект без сохранения исходного чекаута репозитория:
+Вы можете установить Agent Shuttle в любой другой Python-проект без сохранения исходного чекаута репозитория:
 
 ```powershell
 # В каталоге вашего проекта:
@@ -64,13 +66,13 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # Установка напрямую из каталога чекаута или готового wheel-файла
-pip install C:\path\to\agent-bridge
+pip install C:\path\to\agent-shuttle
 ```
 
 После установки в `.venv` проекта:
-- Команда `agent-bridge` доступна по пути `.venv\Scripts\agent-bridge.exe`.
-- Сервер MCP `agent-bridge-mcp` доступен по пути `.venv\Scripts\agent-bridge-mcp.exe`.
-- Модули можно импортировать в Python: `from agent_bridge import BridgeClient, connect_harness, HarnessLaunch`.
+- Команда `agent-shuttle` доступна по пути `.venv\Scripts\agent-shuttle.exe`.
+- Сервер MCP `agent-shuttle-mcp` доступен по пути `.venv\Scripts\agent-shuttle-mcp.exe`.
+- Модули можно импортировать в Python: `from agent_shuttle import ShuttleClient, connect_harness, HarnessLaunch`.
 
 ---
 
@@ -79,13 +81,13 @@ pip install C:\path\to\agent-bridge
 Перед запуском серверов проверьте, какие харнессы обнаружены в системе:
 
 ```powershell
-agent-bridge discover
+agent-shuttle discover
 ```
 
 Пример вывода:
 ```json
 {
-  "codex": "agent-bridge",
+  "codex": "agent-shuttle",
   "antigravity": "C:\\Users\\username\\AppData\\Local\\agy\\bin\\agy.exe",
   "opencode": "C:\\Users\\username\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe",
   "claude_code": "C:\\Users\\username\\.local\\bin\\claude.exe"
@@ -94,7 +96,7 @@ agent-bridge discover
 
 Если исполняемый файл расположен вне стандартных путей поиска, укажите его явно:
 ```powershell
-agent-bridge discover --agy-command 'D:\tools\agy.exe'
+agent-shuttle discover --agy-command 'D:\tools\agy.exe'
 # Или через переменную окружения:
 $env:BRIDGE_AGY_COMMAND = 'D:\tools\agy.exe'
 ```
@@ -106,13 +108,13 @@ $env:BRIDGE_AGY_COMMAND = 'D:\tools\agy.exe'
 ### Сервер Codex
 Запускает бэкенд Codex, привязанный к текущему каталогу проекта, на порту 8765:
 ```powershell
-agent-bridge serve codex --workspace . --port 8765
+agent-shuttle serve codex --workspace . --port 8765
 ```
 
 ### Сервер Antigravity
 Запускает бэкенд Antigravity CLI в headless-режиме на порту 8766:
 ```powershell
-agent-bridge serve antigravity --workspace . --port 8766
+agent-shuttle serve antigravity --workspace . --port 8766
 ```
 
 ### OpenCode или Claude Code (профиль Ollama)
@@ -120,10 +122,10 @@ OpenCode и Claude Code работают на основе JSON-профилей
 
 ```powershell
 # OpenCode с локальной Ollama
-agent-bridge serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
+agent-shuttle serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
 
 # Claude Code с локальной Ollama
-agent-bridge serve profile --profile .\examples\claude-code-ollama.json --workspace . --port 8768
+agent-shuttle serve profile --profile .\examples\claude-code-ollama.json --workspace . --port 8768
 ```
 
 Параметр `--workspace` задает рабочий каталог агента и перекрывает относительное значение `workspace` из JSON-файла.
@@ -142,7 +144,7 @@ agent-bridge serve profile --profile .\examples\claude-code-ollama.json --worksp
 
 - **Возможности и квоты** (опрашивает метаданные харнесса):
   ```powershell
-  agent-bridge info http://127.0.0.1:8765
+  agent-shuttle info http://127.0.0.1:8765
   ```
 
 ---
@@ -151,22 +153,22 @@ agent-bridge serve profile --profile .\examples\claude-code-ollama.json --worksp
 
 ### Через CLI
 ```powershell
-agent-bridge ask http://127.0.0.1:8765 "Проверь тесты и перечисли упавшие."
+agent-shuttle ask http://127.0.0.1:8765 "Проверь тесты и перечисли упавшие."
 ```
 
 С выбором модели и усилия рассуждений:
 ```powershell
-agent-bridge ask http://127.0.0.1:8766 "Объясни архитектуру репозитория." `
+agent-shuttle ask http://127.0.0.1:8766 "Объясни архитектуру репозитория." `
   --model gemini-3.8-flash-medium --reasoning-effort medium
 ```
 
 ### Через Python API
 ```python
 import asyncio
-from agent_bridge import BridgeClient
+from agent_shuttle import ShuttleClient
 
 async def main():
-    client = BridgeClient()
+    client = ShuttleClient()
     result = await client.ask(
         "http://127.0.0.1:8765",
         "Перечисли точки входа Python из pyproject.toml",
@@ -179,16 +181,16 @@ asyncio.run(main())
 ```
 
 ### Через Model Context Protocol (MCP)
-Добавьте Agent Bridge в конфигурацию MCP вашего клиентского агента (например, в `.codex/config.toml` для Codex или `.agents/mcp_config.json` для Antigravity).
+Добавьте Agent Shuttle в конфигурацию MCP вашего клиентского агента (например, в `.codex/config.toml` для Codex или `.agents/mcp_config.json` для Antigravity).
 
 Пример конфигурации:
 ```toml
-[mcp_servers.agent_bridge]
+[mcp_servers.agent_shuttle]
 command = "C:/path/to/project/.venv/Scripts/python.exe"
-args = ["-m", "agent_bridge.mcp_server"]
+args = ["-m", "agent_shuttle.mcp_server"]
 tool_timeout_sec = 1800
 
-[mcp_servers.agent_bridge.env]
+[mcp_servers.agent_shuttle.env]
 BRIDGE_CODEX_URL = "http://127.0.0.1:8765"
 BRIDGE_ANTIGRAVITY_URL = "http://127.0.0.1:8766"
 BRIDGE_ANTIGRAVITY_WORKSPACE = "C:/path/to/project"

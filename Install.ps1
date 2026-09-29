@@ -29,5 +29,5 @@ if ($env:BRIDGE_INSTALL_AGY_SDK -eq '1') {
     & $agyPython -m pip install -r (Join-Path $root 'requirements-antigravity.txt')
 }
 
-Write-Output "Installed agent-bridge in $venv"
-Write-Output 'Run .\Configure-Mcp.ps1, then .\Start-Bridge.ps1'
+Write-Output "Installed agent-shuttle in $venv"
+Write-Output 'Run .\Configure-Shuttle-Mcp.ps1, then .\Start-Shuttle.ps1'

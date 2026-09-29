@@ -1,18 +1,18 @@
-# Справочник API Agent Bridge
+# Справочник API Agent Shuttle
 
 [English version / Английская версия](../api.md)
 
-В этом документе приведен полный справочник единого публичного Python API, эндпоинтов HTTP, команд CLI и инструментов Model Context Protocol (MCP), предоставляемых Agent Bridge.
+В этом документе приведен полный справочник единого публичного Python API, эндпоинтов HTTP, команд CLI и инструментов Model Context Protocol (MCP), предоставляемых Agent Shuttle.
 
 ---
 
 ## Справочник Python API
 
-Публичные классы и функции импортируются напрямую из пакета `agent_bridge`:
+Публичные классы и функции импортируются напрямую из пакета `agent_shuttle`:
 
 ```python
-from agent_bridge import (
-    BridgeClient,
+from agent_shuttle import (
+    ShuttleClient,
     BridgeResult,
     BridgeSession,
     HarnessLaunch,
@@ -27,12 +27,12 @@ from agent_bridge import (
 )
 ```
 
-### `BridgeClient`
+### `ShuttleClient`
 
 Основной клиент для взаимодействия и отправки задач любому серверу A2A 1.x.
 
 ```python
-client = BridgeClient(timeout_seconds: float = 1800)
+client = ShuttleClient(timeout_seconds: float = 1800)
 ```
 
 #### Методы
@@ -133,7 +133,7 @@ launch = HarnessLaunch(name="antigravity", url="http://127.0.0.1:8766", workspac
 async with connect_harness(launch) as connection:
     # connection.url готов к работе
     # connection.started равен True, если сервер был запущен временно
-    result = await BridgeClient().ask(connection.url, "Проверь тесты")
+    result = await ShuttleClient().ask(connection.url, "Проверь тесты")
 ```
 
 При завершении контекста временные процессы и их дочернее дерево гарантированно завершаются (с помощью `taskkill /PID ... /T /F` на Windows).
@@ -180,7 +180,7 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
 
 ## Справочник эндпоинтов HTTP
 
-Каждый сервер Agent Bridge A2A предоставляет следующие HTTP-эндпоинты на интерфейсе loopback (`127.0.0.1`):
+Каждый сервер Agent Shuttle A2A предоставляет следующие HTTP-эндпоинты на интерфейсе loopback (`127.0.0.1`):
 
 | Эндпоинт | Метод | Описание |
 |---|---|---|
@@ -196,48 +196,48 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
 
 ## Интерфейс командной строки (CLI)
 
-Точка входа — `agent-bridge` (или `python -m agent_bridge.cli`).
+Точка входа — `agent-shuttle` (или `python -m agent_shuttle`). Старые имена `BridgeClient`, `agent_bridge` и `agent-bridge` сохранены.
 
-### `agent-bridge serve`
+### `agent-shuttle serve`
 
 Запускает A2A-сервер:
 
 ```powershell
 # Запуск Codex
-agent-bridge serve codex --port 8765 [--workspace <КАТАЛОГ>]
+agent-shuttle serve codex --port 8765 [--workspace <КАТАЛОГ>]
 
 # Запуск Antigravity CLI
-agent-bridge serve antigravity --port 8766 [--workspace <КАТАЛОГ>] `
+agent-shuttle serve antigravity --port 8766 [--workspace <КАТАЛОГ>] `
   [--agy-command <ПУТЬ>] `
   [--agy-turn-timeout-seconds 300] `
   [--agy-dangerously-skip-permissions]
 
 # Запуск OpenCode или Claude Code из профиля
-agent-bridge serve profile --profile .\profile.json --port 8767 [--workspace <КАТАЛОГ>]
+agent-shuttle serve profile --profile .\profile.json --port 8767 [--workspace <КАТАЛОГ>]
 ```
 
-### `agent-bridge ask`
+### `agent-shuttle ask`
 
 Отправляет задачу:
 ```powershell
-agent-bridge ask <URL> "<ПРОМПТ>" `
+agent-shuttle ask <URL> "<ПРОМПТ>" `
   [--model <МОДЕЛЬ>] `
   [--reasoning-effort <УСИЛИЕ>] `
   [--tool-policy <no_tools|read_only|workspace_write|full_access>]
 ```
 
-### `agent-bridge info`
+### `agent-shuttle info`
 
 Запрашивает и выводит JSON возможностей и квот по указанному `<URL>`:
 ```powershell
-agent-bridge info http://127.0.0.1:8765
+agent-shuttle info http://127.0.0.1:8765
 ```
 
-### `agent-bridge discover`
+### `agent-shuttle discover`
 
 Выводит список найденных в системе харнессов:
 ```powershell
-agent-bridge discover `
+agent-shuttle discover `
   [--agy-command <ПУТЬ>] `
   [--opencode-command <ПУТЬ>] `
   [--claude-command <ПУТЬ>]
@@ -249,8 +249,8 @@ agent-bridge discover `
 
 Сервер MCP работает через стандартные потоки ввода-вывода (stdio):
 ```powershell
-agent-bridge-mcp
-# или: python -m agent_bridge.mcp_server
+agent-shuttle-mcp
+# или: python -m agent_shuttle.mcp_server
 ```
 
 ### Переменные окружения

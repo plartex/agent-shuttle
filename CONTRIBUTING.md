@@ -1,8 +1,8 @@
-# Contributing to Agent Bridge
+# Contributing to Agent Shuttle
 
 [Russian version / Русская версия](CONTRIBUTING.ru.md)
 
-Thank you for contributing to Agent Bridge. This project maintains a modular, local-first bridge between heterogeneous coding agent harnesses. Please follow these guidelines for development, testing, and documentation.
+Thank you for contributing to Agent Shuttle. This project maintains a modular, local-first bridge between heterogeneous coding agent harnesses. Please follow these guidelines for development, testing, and documentation.
 
 ---
 

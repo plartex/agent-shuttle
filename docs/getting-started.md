@@ -1,19 +1,19 @@
-# Getting Started with Agent Bridge
+# Getting Started with Agent Shuttle
 
 [Russian version / Русская версия](ru/getting-started.md)
 
-This guide walks you through setting up Agent Bridge, verifying harness availability, starting local A2A and MCP servers, and sending your first agent tasks via Python, CLI, and MCP.
+This guide walks you through setting up Agent Shuttle, verifying harness availability, starting local A2A and MCP servers, and sending your first agent tasks via Python, CLI, and MCP.
 
 ---
 
 ## Prerequisites
 
-Agent Bridge interacts with local coding harnesses on your workstation. Make sure you have:
+Agent Shuttle interacts with local coding harnesses on your workstation. Make sure you have:
 
 - **Python 3.11 or newer** installed and available on `PATH`.
 - For **Codex**:
   - The Codex desktop or CLI app installed and signed in.
-  - Python SDK dependency (`openai-codex`) is installed automatically by Agent Bridge.
+  - Python SDK dependency (`openai-codex`) is installed automatically by Agent Shuttle.
 - For **Antigravity**:
   - The official `agy` CLI installed and authenticated (run `agy` interactively to sign in, then verify with `agy models`).
   - Test sign-in by running `agy models` in your terminal.
@@ -28,7 +28,7 @@ Agent Bridge interacts with local coding harnesses on your workstation. Make sur
 
 ## Setup in the Repository Checkout (Windows)
 
-If you are developing or running Agent Bridge directly from a git clone:
+If you are developing or running Agent Shuttle directly from a git clone:
 
 ```powershell
 # 1. Clone the repository
@@ -36,27 +36,29 @@ git clone https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge.git
 Set-Location codex-antigravity-a2a-bridge
 
 # 2. Bootstrap virtual environment and install dependencies
-& .\Install.ps1
+& .\Install-Shuttle.ps1
 
 # 3. Generate MCP configurations for Codex and Antigravity
-& .\Configure-Mcp.ps1
+& .\Configure-Shuttle-Mcp.ps1
 
 # 4. Start background servers for Codex (8765) and Antigravity (8766)
-& .\Start-Bridge.ps1
+& .\Start-Shuttle.ps1
 ```
+
+The GitLab repository URL and checkout directory still use the former name; the installed package and CLI are Agent Shuttle.
 
 To stop background servers:
 ```powershell
-& .\Stop-Bridge.ps1
+& .\Stop-Shuttle.ps1
 ```
 
 Logs and process identifiers are written to `.runtime/` (`codex.out.log`, `codex.err.log`, `antigravity.out.log`, `antigravity.err.log`).
 
 ---
 
-## Using Agent Bridge as a Dependency in Another Project
+## Using Agent Shuttle as a Dependency in Another Project
 
-You can install Agent Bridge into any other Python project without keeping the source checkout active.
+You can install Agent Shuttle into any other Python project without keeping the source checkout active.
 
 ```powershell
 # In your project directory:
@@ -64,13 +66,13 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 # Install directly from the local checkout or built wheel
-pip install C:\path\to\agent-bridge
+pip install C:\path\to\agent-shuttle
 ```
 
 Once installed into your project's `.venv`:
-- The CLI command `agent-bridge` is installed in `.venv\Scripts\agent-bridge.exe`.
-- The MCP server `agent-bridge-mcp` is installed in `.venv\Scripts\agent-bridge-mcp.exe`.
-- The library can be imported in Python: `from agent_bridge import BridgeClient, connect_harness, HarnessLaunch`.
+- The CLI command `agent-shuttle` is installed in `.venv\Scripts\agent-shuttle.exe`.
+- The MCP server `agent-shuttle-mcp` is installed in `.venv\Scripts\agent-shuttle-mcp.exe`.
+- The library can be imported in Python: `from agent_shuttle import ShuttleClient, connect_harness, HarnessLaunch`.
 
 ---
 
@@ -79,13 +81,13 @@ Once installed into your project's `.venv`:
 Before starting servers, inspect which harnesses are discovered on your system:
 
 ```powershell
-agent-bridge discover
+agent-shuttle discover
 ```
 
 Example JSON output:
 ```json
 {
-  "codex": "agent-bridge",
+  "codex": "agent-shuttle",
   "antigravity": "C:\\Users\\username\\AppData\\Local\\agy\\bin\\agy.exe",
   "opencode": "C:\\Users\\username\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe",
   "claude_code": "C:\\Users\\username\\.local\\bin\\claude.exe"
@@ -94,7 +96,7 @@ Example JSON output:
 
 If an executable is located outside standard search paths, you can provide an override:
 ```powershell
-agent-bridge discover --agy-command 'D:\tools\agy.exe'
+agent-shuttle discover --agy-command 'D:\tools\agy.exe'
 # Or via environment variable:
 $env:BRIDGE_AGY_COMMAND = 'D:\tools\agy.exe'
 ```
@@ -106,24 +108,24 @@ $env:BRIDGE_AGY_COMMAND = 'D:\tools\agy.exe'
 ### Codex Server
 Runs the Codex backend bound to the current project directory on port 8765:
 ```powershell
-agent-bridge serve codex --workspace . --port 8765
+agent-shuttle serve codex --workspace . --port 8765
 ```
 
 ### Antigravity Server
 Runs the Antigravity headless CLI backend on port 8766:
 ```powershell
-agent-bridge serve antigravity --workspace . --port 8766
+agent-shuttle serve antigravity --workspace . --port 8766
 ```
 
 ### OpenCode or Claude Code (Ollama Profile)
-OpenCode and Claude Code run using server-owned JSON profiles. Agent Bridge includes ready-to-use profiles in `examples/`:
+OpenCode and Claude Code run using server-owned JSON profiles. Agent Shuttle includes ready-to-use profiles in `examples/`:
 
 ```powershell
 # OpenCode with local Ollama
-agent-bridge serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
+agent-shuttle serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
 
 # Claude Code with local Ollama
-agent-bridge serve profile --profile .\examples\claude-code-ollama.json --workspace . --port 8768
+agent-shuttle serve profile --profile .\examples\claude-code-ollama.json --workspace . --port 8768
 ```
 
 The `--workspace` parameter sets the agent's target working directory and overrides any relative `workspace` setting inside the JSON profile.
@@ -142,7 +144,7 @@ Each server provides read-only HTTP endpoints on loopback:
 
 - **Capabilities & Quotas** (queries harness metadata):
   ```powershell
-  agent-bridge info http://127.0.0.1:8765
+  agent-shuttle info http://127.0.0.1:8765
   ```
 
 ---
@@ -151,22 +153,22 @@ Each server provides read-only HTTP endpoints on loopback:
 
 ### Via CLI
 ```powershell
-agent-bridge ask http://127.0.0.1:8765 "Check the test suite and report failing tests."
+agent-shuttle ask http://127.0.0.1:8765 "Check the test suite and report failing tests."
 ```
 
 With model and effort selection:
 ```powershell
-agent-bridge ask http://127.0.0.1:8766 "Explain the architecture of this repo." `
+agent-shuttle ask http://127.0.0.1:8766 "Explain the architecture of this repo." `
   --model gemini-3.8-flash-medium --reasoning-effort medium
 ```
 
 ### Via Python API
 ```python
 import asyncio
-from agent_bridge import BridgeClient
+from agent_shuttle import ShuttleClient
 
 async def main():
-    client = BridgeClient()
+    client = ShuttleClient()
     result = await client.ask(
         "http://127.0.0.1:8765",
         "List all Python entry points in pyproject.toml",
@@ -179,16 +181,16 @@ asyncio.run(main())
 ```
 
 ### Via Model Context Protocol (MCP)
-Add Agent Bridge to your client MCP configuration (such as Codex `.codex/config.toml` or Antigravity `.agents/mcp_config.json`).
+Add Agent Shuttle to your client MCP configuration (such as Codex `.codex/config.toml` or Antigravity `.agents/mcp_config.json`).
 
 Example configuration:
 ```toml
-[mcp_servers.agent_bridge]
+[mcp_servers.agent_shuttle]
 command = "C:/path/to/project/.venv/Scripts/python.exe"
-args = ["-m", "agent_bridge.mcp_server"]
+args = ["-m", "agent_shuttle.mcp_server"]
 tool_timeout_sec = 1800
 
-[mcp_servers.agent_bridge.env]
+[mcp_servers.agent_shuttle.env]
 BRIDGE_CODEX_URL = "http://127.0.0.1:8765"
 BRIDGE_ANTIGRAVITY_URL = "http://127.0.0.1:8766"
 BRIDGE_ANTIGRAVITY_WORKSPACE = "C:/path/to/project"

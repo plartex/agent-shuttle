@@ -20,11 +20,11 @@ from .managed import HarnessLaunch, connect_harness
 def _debug(stage: str) -> None:
     if os.environ.get("BRIDGE_DEBUG") == "1":
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        print(f"[agent-bridge] {stamp} {stage}", file=sys.stderr, flush=True)
+        print(f"[agent-shuttle] {stamp} {stage}", file=sys.stderr, flush=True)
 
 
 mcp = FastMCP(
-    "Agent Bridge",
+    "Agent Shuttle",
     instructions=(
         "Use ask_agent for configured OpenCode, Claude Code, or other agent profiles. "
         "The legacy ask_antigravity and ask_codex tools remain available. "

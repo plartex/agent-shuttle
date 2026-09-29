@@ -2,13 +2,13 @@
 
 [Russian version / Русская версия](ru/permissions.md)
 
-Agent Bridge establishes a standardized, multi-tiered security and tool policy model across heterogeneous agent harnesses. This guide explains how tool policies map to each underlying harness, how permissions are enforced, and the critical security boundaries that must be maintained.
+Agent Shuttle establishes a standardized, multi-tiered security and tool policy model across heterogeneous agent harnesses. This guide explains how tool policies map to each underlying harness, how permissions are enforced, and the critical security boundaries that must be maintained.
 
 ---
 
 ## The Four Standard Tool Policies
 
-Agent Bridge standardizes tool permissions into four explicit tiers:
+Agent Shuttle standardizes tool permissions into four explicit tiers:
 
 | Policy | Rank | Description |
 |---|---|---|
@@ -21,7 +21,7 @@ Agent Bridge standardizes tool permissions into four explicit tiers:
 
 ## Harness-Specific Mappings
 
-Each underlying harness enforces security policies differently. Agent Bridge maps the unified policies to native harness primitives as follows:
+Each underlying harness enforces security policies differently. Agent Shuttle maps the unified policies to native harness primitives as follows:
 
 ### 1. Codex
 
@@ -39,11 +39,11 @@ Antigravity executes via the official `agy` CLI in headless mode (`-p` / `stream
 - **Default Permission Mode (`settings`)**:
   - The CLI respects scoped permission rules defined in the user's `~/.gemini/antigravity-cli/settings.json`.
   - **Headless Confirmation Limitation:** In headless mode, the CLI cannot interactively ask the user for approval. Consequently, actions governed by `ask` or `deny` rules are rejected immediately. Rule precedence is `deny` > `ask` > `allow`.
-  - **Soft-Denial Detection:** When a tool call is denied, `agy` may exit with return code 0 and emit `status: SUCCESS` with `denied_actions` or an empty response body. Agent Bridge inspects the output JSON and raises `AntigravityPermissionDenied` or `RuntimeError` rather than returning a misleading empty or truncated response.
+  - **Soft-Denial Detection:** When a tool call is denied, `agy` may exit with return code 0 and emit `status: SUCCESS` with `denied_actions` or an empty response body. Agent Shuttle inspects the output JSON and raises `AntigravityPermissionDenied` or `RuntimeError` rather than returning a misleading empty or truncated response.
 - **`full_access` (`all` mode)**:
   - Enabled by starting the server with `--agy-dangerously-skip-permissions` or passing `HarnessLaunch(tool_policy="full_access")`.
   - Passes `--dangerously-skip-permissions` to all CLI calls on that server.
-- **`read_only` & `no_tools`**: **Unsupported.** Antigravity CLI does not provide a guaranteed sandbox or read-only flag in headless mode. Agent Bridge explicitly rejects `read_only` and `no_tools` to prevent a false sense of security.
+- **`read_only` & `no_tools`**: **Unsupported.** Antigravity CLI does not provide a guaranteed sandbox or read-only flag in headless mode. Agent Shuttle explicitly rejects `read_only` and `no_tools` to prevent a false sense of security.
 
 ### 3. OpenCode
 
@@ -83,7 +83,7 @@ Each profile specifies a `max_tool_policy`:
 ```
 
 - When a client sends a request with `--tool-policy`, `profile.resolve()` checks the requested policy rank against `max_tool_policy`.
-- If a client requests `workspace_write` or `full_access` on a profile whose maximum is `read_only`, Agent Bridge rejects the request immediately before starting any model turn or background process.
+- If a client requests `workspace_write` or `full_access` on a profile whose maximum is `read_only`, Agent Shuttle rejects the request immediately before starting any model turn or background process.
 - No client can escalate permissions beyond the server's configured profile ceiling.
 
 ---
@@ -98,7 +98,7 @@ Each profile specifies a `max_tool_policy`:
 2. **Local Multi-Client Access:**  
    Because the local A2A server listens on loopback (`127.0.0.1`) without authentication, any local process on the machine can connect to that port and submit tasks that will run with full unapproved privileges.
 3. **Never Run Untrusted Tasks:**  
-   Do not feed untrusted code, external prompt injections, or unverified tasks to an agent running under `full_access`. If you must evaluate untrusted code, run the entire Agent Bridge and harness inside a hardened OS container or virtual machine.
+   Do not feed untrusted code, external prompt injections, or unverified tasks to an agent running under `full_access`. If you must evaluate untrusted code, run the entire Agent Shuttle and harness inside a hardened OS container or virtual machine.
 
 ---
 
@@ -129,4 +129,4 @@ If you require partial tool execution for Antigravity without giving total syste
 
 ## Network Isolation Notice
 
-Agent Bridge servers bind exclusively to `127.0.0.1` (loopback). There is no TLS encryption or authentication on the A2A HTTP port. Exposing these ports to an external or local network without a reverse proxy enforcing TLS and strict authentication exposes your workstation to remote code execution.
+Agent Shuttle servers bind exclusively to `127.0.0.1` (loopback). There is no TLS encryption or authentication on the A2A HTTP port. Exposing these ports to an external or local network without a reverse proxy enforcing TLS and strict authentication exposes your workstation to remote code execution.

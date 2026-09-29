@@ -2,7 +2,7 @@
 
 [Russian version / Русская версия](ru/architecture.md)
 
-Agent Bridge is designed as a modular, local-first interoperability layer that connects autonomous coding harnesses without passing credentials across network boundaries. This document outlines the architectural design, protocol choices, lifecycle supervision, and session management.
+Agent Shuttle is designed as a modular, local-first interoperability layer that connects autonomous coding harnesses without passing credentials across network boundaries. This document outlines the architectural design, protocol choices, lifecycle supervision, and session management.
 
 ---
 
@@ -16,7 +16,7 @@ Agent Bridge is designed as a modular, local-first interoperability layer that c
                                | A2A 1.0 JSON-RPC (HTTP)
                                v
 +─────────────────────────────────────────────────────────────+
-|               Agent Bridge A2A Server (Starlette)           |
+|               Agent Shuttle A2A Server (Starlette)           |
 |  - A2A JSON-RPC Protocol Routes (/)                         |
 |  - Agent Card Endpoint (/.well-known/agent-card.json)       |
 |  - Read-Only Inspection Endpoints (/bridge/*)               |
@@ -93,7 +93,7 @@ Antigravity ── MCP ask_codex ──── A2A (HTTP 127.0.0.1) ─── Cod
 Working directories are strictly verified:
 - Paths are resolved to their absolute, canonical representation (`path.resolve(strict=True)`).
 - On Windows, paths are compared with case normalization (`os.path.normcase`).
-- **Connection Guard:** `connect_harness()` inspects the reported `/bridge/identity` workspace of any running server. If the existing server's workspace does not match the requested directory, Agent Bridge refuses to reuse the server and raises a `ValueError`. This prevents accidental cross-project modifications.
+- **Connection Guard:** `connect_harness()` inspects the reported `/bridge/identity` workspace of any running server. If the existing server's workspace does not match the requested directory, Agent Shuttle refuses to reuse the server and raises a `ValueError`. This prevents accidental cross-project modifications.
 
 ---
 
@@ -112,6 +112,6 @@ Stateful conversations are governed by `SessionManager` in `agent_bridge/a2a_ser
 
 ## Threat Model & Local Security
 
-- **Loopback Boundary:** Agent Bridge relies on OS-level network loopback isolation (`127.0.0.1`). Any process running under any user account on the local machine can connect to an open A2A port.
+- **Loopback Boundary:** Agent Shuttle relies on OS-level network loopback isolation (`127.0.0.1`). Any process running under any user account on the local machine can connect to an open A2A port.
 - **In-Memory Store:** The A2A task store (`InMemoryTaskStore`) is kept entirely in memory and cleared on server termination. No task artifacts or prompts are persisted in an unencrypted database.
-- **Sandbox Limits:** Tool policies (`read_only`, `workspace_write`) constrain agent actions through the harness's internal policy engine or sandbox. They are not an operating system container (like Docker or Firejail). If total isolation from the host filesystem is required, run Agent Bridge inside an external container.
+- **Sandbox Limits:** Tool policies (`read_only`, `workspace_write`) constrain agent actions through the harness's internal policy engine or sandbox. They are not an operating system container (like Docker or Firejail). If total isolation from the host filesystem is required, run Agent Shuttle inside an external container.
