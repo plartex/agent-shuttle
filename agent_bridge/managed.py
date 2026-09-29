@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,32 @@ _BACKENDS = {
     "opencode": {"opencode"},
     "claude_code": {"claude_code"},
 }
+
+
+def _trace(stage: str) -> None:
+    if os.environ.get("BRIDGE_DEBUG") == "1":
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        print(f"[agent-bridge] {stamp} managed: {stage}", file=sys.stderr, flush=True)
+
+
+async def _stop_process_tree(process: subprocess.Popen) -> None:
+    """Reap the venv launcher and its Python child before deleting Windows logs."""
+    if os.name == "nt" and process.poll() is None:
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True, timeout=10, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            _trace(f"taskkill failed ({type(exc).__name__})")
+    if process.poll() is None:
+        process.terminate()
+    try:
+        await asyncio.to_thread(process.wait, timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        await asyncio.to_thread(process.wait)
 
 
 @dataclass(frozen=True)
@@ -127,11 +154,13 @@ async def connect_harness(
         raise ValueError(f"Antigravity CLI cannot enforce {launch.tool_policy}")
     client = client or BridgeClient()
     identify = getattr(client, "identity", None) or client.capabilities
+    _trace("checking existing server")
     try:
         _verify_connection(launch, await identify(launch.url))
     except ValueError:
         raise
     except Exception as exc:
+        _trace(f"existing server unavailable ({type(exc).__name__})")
         if not launch.start_if_missing:
             raise RuntimeError(f"Bridge at {launch.url} is unavailable: {exc}") from exc
     else:
@@ -150,6 +179,7 @@ async def connect_harness(
             launch.model, None, launch.tool_policy,
         )
     command = launch.command or discover_harnesses().get(launch.name)
+    _trace(f"discovered command={bool(command)}")
     if command is None and profile_path is None:
         raise RuntimeError(f"{launch.name} is not installed; provide command or a running Bridge URL")
 
@@ -180,7 +210,12 @@ async def connect_harness(
         log_path = launch.log_path or Path(temporary) / "bridge.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", encoding="utf-8") as log:
-            process = subprocess.Popen(argv, cwd=workspace, stdout=log, stderr=subprocess.STDOUT)
+            _trace(f"spawning temporary server executable={sys.executable} log={log_path}")
+            process = subprocess.Popen(
+                argv, cwd=workspace, stdin=subprocess.DEVNULL,
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+            _trace(f"temporary server pid={process.pid}")
             try:
                 last_error: Exception | None = None
                 for _ in range(60):
@@ -191,11 +226,14 @@ async def connect_harness(
                         )
                     try:
                         _verify_connection(launch, await identify(launch.url))
+                        _trace("temporary server identity verified")
                         break
                     except ValueError:
                         raise
                     except Exception as exc:
                         last_error = exc
+                        if os.environ.get("BRIDGE_DEBUG") == "1" and _ < 3:
+                            _trace(f"identity attempt {_ + 1} failed ({type(exc).__name__}: {str(exc)[:200]})")
                         await asyncio.sleep(0.5)
                 else:
                     tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
@@ -205,9 +243,4 @@ async def connect_harness(
                 yield BridgeConnection(launch.url, started=True, log_path=log_path)
             finally:
                 if process.poll() is None:
-                    process.terminate()
-                    try:
-                        await asyncio.to_thread(process.wait, timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        await asyncio.to_thread(process.wait)
+                    await _stop_process_tree(process)

@@ -1,6 +1,8 @@
 """Lifecycle contracts for the reusable Bridge server manager."""
 
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +13,12 @@ from agent_bridge import HarnessLaunch, connect_harness
 
 
 class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        taskkill = patch("agent_bridge.managed.subprocess.run",
+                         return_value=SimpleNamespace(returncode=0))
+        self.mock_taskkill = taskkill.start()
+        self.addCleanup(taskkill.stop)
+
     async def test_full_access_policy_alone_configures_antigravity_harness(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -30,6 +38,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                  patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     self.assertIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
+                    self.assertEqual(popen.call_args.kwargs["stdin"], subprocess.DEVNULL)
 
     async def test_temp_ollama_profile_can_opt_into_full_access(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -129,6 +138,11 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(profile["default_model"], launch.model)
             process.terminate.assert_called_once()
             process.wait.assert_called_once()
+            if os.name == "nt":
+                self.mock_taskkill.assert_called_with(
+                    ["taskkill", "/PID", "123", "/T", "/F"],
+                    capture_output=True, timeout=10, check=False,
+                )
 
     async def test_explicit_server_must_be_available(self):
         with tempfile.TemporaryDirectory() as folder:
