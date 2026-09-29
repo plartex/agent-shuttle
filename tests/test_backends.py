@@ -575,6 +575,67 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.details, {"preflight_retries": 1})
         self.assertEqual(spawn.call_count, 2)
 
+    async def test_antigravity_retries_transient_eligibility_503_without_switching_model(self):
+        class Process:
+            def __init__(self, code, stdout=b"", stderr=b""):
+                self.returncode = code
+                self.stdout = stdout
+                self.stderr = stderr
+
+            async def communicate(self):
+                return self.stdout, self.stderr
+
+        unavailable = Process(1, stderr=(
+            b"error: Eligibility check failed: UNAVAILABLE (code 503): "
+            b"The service is currently unavailable.\n"
+        ))
+        success = Process(0, stdout=b'{"status":"SUCCESS","response":"OK"}')
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+                   side_effect=[unavailable, success]) as spawn, \
+             patch("agent_bridge.backends.asyncio.sleep"):
+            answer = await AntigravityCliBackend(Path.cwd()).run(
+                "hello", model="gemini-3.8-flash-low",
+            )
+        self.assertEqual(answer.text, "OK")
+        self.assertEqual(answer.details, {"preflight_retries": 1})
+        self.assertEqual(spawn.call_count, 2)
+        self.assertEqual(
+            [call.args[call.args.index("--model") + 1] for call in spawn.call_args_list],
+            ["gemini-3.8-flash-low", "gemini-3.8-flash-low"],
+        )
+
+    async def test_antigravity_eligibility_503_retry_is_bounded_and_actionable(self):
+        class Process:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", (b"error: Eligibility check failed: UNAVAILABLE (code 503): "
+                             b"The service is currently unavailable.\n")
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+                   return_value=Process()) as spawn, \
+             patch("agent_bridge.backends.asyncio.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "after 3 attempt") as captured:
+                await AntigravityCliBackend(Path.cwd()).run(
+                    "hello", model="gemini-3.8-flash-low",
+                )
+        self.assertIn("gemini-3.8-flash-low", str(captured.exception))
+        self.assertIn("upstream", str(captured.exception).lower())
+        self.assertEqual(spawn.call_count, 3)
+
+    async def test_antigravity_does_not_retry_503_after_turn_start(self):
+        class Process:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"error: model request failed: UNAVAILABLE (code 503)"
+
+        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+                   return_value=Process()) as spawn:
+            with self.assertRaisesRegex(RuntimeError, "model request failed"):
+                await AntigravityCliBackend(Path.cwd()).run("hello")
+        self.assertEqual(spawn.call_count, 1)
+
     async def test_antigravity_preflight_retry_is_bounded(self):
         class Process:
             returncode = 1
