@@ -45,8 +45,10 @@ def _retryable_agy_preflight_failure(stderr: bytes) -> bool:
     message = stderr.decode(errors="replace").lower()
     return (
         "eligibility check failed" in message
-        and "failed to get profile picture" in message
-        and "tls handshake timeout" in message
+        and (
+            ("failed to get profile picture" in message and "tls handshake timeout" in message)
+            or ("unavailable (code 503)" in message and "service is currently unavailable" in message)
+        )
     )
 
 
@@ -341,9 +343,21 @@ class AntigravityCliBackend:
                 authentication_error = _agy_authentication_error(stderr)
                 if authentication_error is not None:
                     raise authentication_error
-                if attempt < 2 and _retryable_agy_preflight_failure(stderr):
-                    await asyncio.sleep(min(0.5 * (attempt + 1), max(0, deadline - asyncio.get_running_loop().time())))
+                retryable_preflight = _retryable_agy_preflight_failure(stderr)
+                if attempt < 2 and retryable_preflight:
+                    delay = (attempt + 1) * (
+                        1.0 if b"unavailable (code 503)" in stderr.lower() else 0.5
+                    )
+                    await asyncio.sleep(min(delay, max(0, deadline - asyncio.get_running_loop().time())))
                     continue
+                if retryable_preflight and b"unavailable (code 503)" in stderr.lower():
+                    selected_model = model or "the CLI's default model"
+                    raise RuntimeError(
+                        f"Antigravity upstream service is unavailable for {selected_model} "
+                        f"after {attempt + 1} attempt(s) (eligibility check HTTP 503). "
+                        "The requested model was not switched; retry later or explicitly "
+                        "select another model."
+                    )
                 raise RuntimeError(
                     f"agy failed ({process.returncode}) after {attempt + 1} attempt(s): "
                     f"{stderr.decode(errors='replace')[-4000:]}"
