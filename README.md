@@ -1,271 +1,220 @@
-# Agent Bridge: Codex, Antigravity, OpenCode и Claude Code
+# Agent Bridge
 
-Локальный A2A/MCP-мост между harness-агентами Codex, Antigravity, OpenCode и Claude Code. OpenCode и Claude Code поддерживают локальные модели Ollama; другие провайдеры задаются серверным профилем.
+[![A2A Protocol 1.0](https://img.shields.io/badge/A2A-1.0_JSON--RPC-blue)](https://a2a-protocol.org/latest/)
+[![MCP](https://img.shields.io/badge/MCP-tools-green)](https://modelcontextprotocol.io/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 
-- **A2A 1.0 JSON-RPC** между самостоятельными агентами.
-- **MCP tools** для вызова второго агента из Codex или Antigravity.
-- **Python API** для приложений и автоматизации.
-- Повторно используемые сессии Python API: несколько задач в одной беседе Codex или Antigravity.
-- Выбор модели при каждом запросе.
-- Отдельный интерфейс моделей, reasoning effort и текущих квот аккаунта.
-- Основной режим использует вход в аккаунты Codex и Antigravity, а не ключи LLM API.
+[Russian version / Русская версия](README.ru.md)
 
-## Использование в другом проекте
+Agent Bridge is a lightweight local interoperability bridge that connects autonomous coding agent harnesses—**Codex**, **Antigravity**, **OpenCode**, and **Claude Code**—over the [A2A (Agent-to-Agent) 1.0 JSON-RPC protocol](https://a2a-protocol.org/latest/) and [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
 
-Установите Agent Bridge в Python-окружение проекта из исходного репозитория или wheel-файла. После установки исходный checkout не требуется: CLI и Python API импортируются из окружения проекта. Например, в PowerShell из каталога своего проекта:
+It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and enforce tool permission boundaries—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
+
+> [!NOTE]
+> **Separation of Concerns:** Agent Bridge provides transport, process lifecycle supervision, session state, and safety boundaries. It contains no linting rules, code smell heuristics, or grading logic. Higher-level quality and review suites (such as `agent-code-checker`) use Agent Bridge purely as a foundation library.
+
+---
+
+## Supported Agent Harnesses
+
+| Harness | Primary Integration Mechanism | Auth & Model Access | Key Features |
+|---|---|---|---|
+| **Codex** | Official `openai-codex` Python SDK | Local Codex App Server sign-in | Sandboxes (`workspace_write`, `read_only`, `full_access`), model & reasoning effort catalog, quota reporting via `account/rateLimits/read`. |
+| **Antigravity** | Official `agy` CLI in headless mode (`-p` / `stream-json`) | Signed-in Antigravity account | Real-time models, efforts, and `/usage` quotas. Default settings or full access (`--dangerously-skip-permissions`). Optional legacy SDK backend. |
+| **OpenCode** | Managed local HTTP server (`--pure serve`) | Local Ollama or cloud providers | Configured via JSON profile, fine-grained tool policies (`no_tools`, `read_only`, `workspace_write`, `full_access`), model variants. |
+| **Claude Code** | Managed CLI in print mode (`claude -p`) | Local Ollama endpoint or Anthropic | Configured via JSON profile, isolated temporary session configs, resume support, safe mode vs full access. |
+
+---
+
+## Installation
+
+Agent Bridge requires **Python 3.11+** and runs on Windows, Linux, and macOS.
+
+### Install from Local Checkout
+
+You can install Agent Bridge directly from its repository checkout into your project's virtual environment:
 
 ```powershell
+# Create and activate your virtual environment
 python -m venv .venv
-& .\.venv\Scripts\python.exe -m pip install 'C:\path\to\agent-bridge'
-& .\.venv\Scripts\agent-bridge.exe serve codex --workspace . --port 8765
+.\.venv\Scripts\Activate.ps1
+
+# Install in standard or editable mode
+pip install C:\path\to\agent-bridge
+# or editable mode during development:
+# pip install -e C:\path\to\agent-bridge
 ```
 
-Для Antigravity используйте `serve antigravity --workspace . --port 8766`. Для OpenCode и Claude Code создайте профиль по [примерам](examples), затем запустите `serve profile --profile <путь-к-JSON> --workspace . --port <порт>`. Параметр `--workspace` задаёт рабочий каталог агента и перекрывает `workspace` из профиля. Если его не передать, относительный путь внутри JSON считается от каталога профиля. ID модели и доступные политики инструментов задаются профилем; сервер слушает только `127.0.0.1`.
+Once installed, the CLI tools (`agent-bridge`, `agent-bridge-mcp`) and Python API (`agent_bridge`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports.
 
-Antigravity CLI в headless-режиме не может запросить подтверждение команды: если её запрещает политика разрешений, Bridge возвращает ошибку, в том числе когда `agy` сообщает `SUCCESS` с частичным ответом. По умолчанию Bridge использует настройки `agy` без расширения доступа. Для частичного доступа настройте точечные правила `permissions.allow` в пользовательском `~/.gemini/antigravity-cli/settings.json` согласно [документации Antigravity](https://antigravity.google/docs/permissions?tab=cli); разрешайте только необходимые действия и учитывайте, что `deny` и `ask` имеют приоритет над `allow`. Bridge не изменяет этот файл автоматически.
+---
 
-Если осознанно нужен **полный доступ ко всем инструментам**, запустите отдельный сервер с `serve antigravity --workspace . --port 8766 --agy-dangerously-skip-permissions` или передайте общий `HarnessLaunch(..., tool_policy="full_access")` для временного сервера. Последний сам добавит нужный флаг `agy`; прежний `agy_dangerously_skip_permissions=True` сохранён для совместимости. Режим действует для каждого вызова и всех ходов сессии на этом сервере; он не ограничен конкретным запросом или каталогом. Любой локальный клиент этого A2A-сервера сможет отправить задачу с таким уровнем доступа — не включайте его для недоверенных задач. `/bridge/capabilities` возвращает `agy_permission_mode: "settings" | "all"`, и `connect_harness()` не переиспользует сервер с отличающимся режимом. Политики `no_tools` и `read_only` для Antigravity отклоняются: CLI не даёт надёжной гарантии этих ограничений.
+## Quickstart (Windows PowerShell)
 
-Для приложения-клиента достаточно `BridgeClient().info(url)` и `BridgeClient().ask(url, prompt, model=...)`. Agent Bridge не содержит правил code smells и может использоваться отдельно от чекера.
+For standalone development and testing inside this repository:
 
-`agent-bridge discover` (или `discover_harnesses()` в Python) показывает доступные локальные харнессы без запуска серверов и моделей. Поиск проверяет `PATH` и типовые пользовательские каталоги установки на Windows; для `agy.exe` также учитываются `BRIDGE_AGY_COMMAND`, `%LOCALAPPDATA%\agy\bin` и `bin` рядом с исходным checkout Agent Bridge. Пути можно переопределить флагами `--agy-command`, `--opencode-command`, `--claude-command` или аргументом `discover_harnesses({"opencode": "C:/tools/opencode.exe"})`. Обнаружение не означает, что Ollama уже запущена или нужная модель загружена.
+1. **Bootstrap dependencies:**
+   ```powershell
+   & .\Install.ps1
+   ```
+   *(If Python 3.11+ is not on `PATH`, set `$env:BRIDGE_BOOTSTRAP_PYTHON = 'C:\path\to\python.exe'` beforehand).*
 
-Для приложения, которому нужен сервер только на время работы, есть `async with connect_harness(HarnessLaunch(name="codex", url="http://127.0.0.1:8765", workspace=Path.cwd())) as peer`. API повторно использует подходящий работающий Bridge либо запускает временный, проверяет backend и останавливает запущенный им процесс при выходе. `start_if_missing=False` требует уже работающий сервер; `command`, `profile_path`, `model`, `ollama_url` и `log_path` настраивают запуск. Для проверки готовности используется быстрый `/bridge/identity`, который не запускает модельный CLI; `/bridge/capabilities` и `/bridge/info` отдельно запрашивают актуальные модели и лимиты. Сам Bridge не задаёт промпты и не запускает проверку качества кода — это делает приложение-клиент.
+2. **Generate MCP configuration files:**
+   ```powershell
+   & .\Configure-Mcp.ps1
+   ```
+   This creates `.codex/config.toml` and `.agents/mcp_config.json` with absolute paths to the environment.
 
-Разовый вызов Antigravity ограничен 300 секундами по умолчанию: Bridge передаёт `--print-timeout` и сам завершает зависший `agy`. Для долгих задач задайте `--agy-turn-timeout-seconds N` при `serve antigravity`, `HarnessLaunch(agy_turn_timeout_seconds=N)` либо `AntigravityCliBackend(..., turn_timeout_seconds=N)`. `/bridge/identity` сообщает текущий лимит; `connect_harness()` проверяет его при повторном использовании сервера. Вызовы метаданных `agy` выполняются последовательно с тайм-аутом 45 секунд на каждый процесс. Каждый ход потоковой сессии ограничен отдельными 30 минутами и со стороны `agy`, и со стороны Bridge.
+3. **Start default Codex and Antigravity bridge servers:**
+   ```powershell
+   & .\Start-Bridge.ps1
+   ```
+   This starts background servers on loopback ports:
+   - Codex: `http://127.0.0.1:8765` (agent card: `http://127.0.0.1:8765/.well-known/agent-card.json`)
+   - Antigravity: `http://127.0.0.1:8766` (agent card: `http://127.0.0.1:8766/.well-known/agent-card.json`)
 
-## Профили OpenCode и Claude Code
+4. **Stop background servers:**
+   ```powershell
+   & .\Stop-Bridge.ps1
+   ```
 
-Новые runtime подключаются через серверный JSON-профиль, а не через отдельный класс для каждого поставщика модели. Установите OpenCode либо Claude Code и запустите Ollama с моделью, указанной в профиле. Примеры [OpenCode](examples/opencode-ollama.json) и [Claude Code](examples/claude-code-ollama.json) используют `qwen3.5:9b`; замените ID на свою установленную модель. Относительный `workspace` считается от каталога JSON-файла.
+Runtime logs and process ID files are stored in `.runtime/` and ignored by version control.
 
-```powershell
-# Два независимых локальных A2A-сервера; запускать в разных терминалах:
-& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
-& .\.venv\Scripts\agent-bridge.exe serve profile --profile .\examples\claude-code-ollama.json --workspace . --port 8768
+---
 
-# Отправка задачи в любой из них:
-& .\.venv\Scripts\agent-bridge.exe ask http://127.0.0.1:8767 "Ответь одним словом: OK" --model qwen3.5:9b --reasoning-effort none --tool-policy no_tools
-& .\.venv\Scripts\agent-bridge.exe ask http://127.0.0.1:8768 "Ответь одним словом: OK" --model qwen3.5:9b --tool-policy no_tools
-```
+## Minimal Examples
 
-`agent-bridge info URL` возвращает разрешённые модели, усилия рассуждения и максимальную политику инструментов. `no_tools` запрещает инструменты; `read_only` разрешает чтение/поиск; `workspace_write` включает модификацию проекта; `full_access` явно снимает ограничения инструментов и внешних каталогов. Общий `HarnessLaunch(tool_policy="full_access")` выбирает максимальный режим для временного сервера любого харнесса: для Codex это sandbox `danger-full-access`, для Antigravity — флаг `--dangerously-skip-permissions`, для OpenCode — все инструменты и внешние каталоги, для Claude Code — `--dangerously-skip-permissions`. При автоматическом профиле Ollama максимальная политика выставляется самим Bridge. Только если разработчик передал *собственный* серверный профиль OpenCode/Claude Code, его `max_tool_policy` остаётся пределом: запрос не может тайно повысить права сверх него. `/bridge/identity` сообщает канонический `workspace` и режим разрешений; `connect_harness()` не переиспользует сервер с другим либо неподтверждённым каталогом. Antigravity CLI пока не обеспечивает политику read-only и отклоняет такой запрос. `--workspace` задаёт рабочий каталог, но **не ограничивает** область действия `full_access`; используйте его только с доверенными задачами и при необходимости добавляйте системную изоляцию.
-
-Для OpenCode кроме Ollama доступны встроенные провайдеры OpenCode: задайте `provider`, разрешённые `allowed_models` и нужный `credential_env` в профиле, а аутентификацию настройте в самом runtime. Для Claude Code поддержаны стандартный Anthropic и Ollama-совместимый endpoint. Совместимость конкретного стороннего провайдера/модели нужно проверять отдельно; наличие ID в профиле не гарантирует поддержку runtime. `reasoning_efforts` — явный allowlist профиля; Ollama/OpenCode использует варианты модели, Claude Code передаёт поддерживаемый effort в CLI.
-
-Для MCP задайте `BRIDGE_AGENTS_JSON` как словарь ID→локальный URL, например `{"opencode-local":"http://127.0.0.1:8767","claude-local":"http://127.0.0.1:8768"}`. Инструменты `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?)` и `get_agent_info(agent_id)` работают с любым таким профилем. Старые `ask_codex` и `ask_antigravity` сохранены.
-
-Python API также сохраняет сессию для нескольких ходов: `AgentProfile.from_file(path)`, затем `backend, info = build_profile(profile)`, `session = await backend.open_session(...)`, `await session.ask(...)`, `await session.close()`, `await backend.close()`. Новая сессия фиксирует модель, effort и политику инструментов; менять их между ходами нельзя. Секреты храните в переменных окружения, не в JSON.
-
-Локальные интеграционные тесты по умолчанию пропускаются. Для проверки обеих связок установите `BRIDGE_LIVE_OLLAMA_MODEL` в ID установленной модели и запустите `python -m unittest tests.test_live_ollama -v`; при необходимости укажите абсолютные пути в `BRIDGE_LIVE_OPENCODE_COMMAND` и `BRIDGE_LIVE_CLAUDE_COMMAND`.
-
-Отдельная проверка реального Antigravity с полным доступом тоже пропускается по умолчанию. Запускайте её только осознанно: `BRIDGE_LIVE_AGY_FULL_ACCESS=1` включает прямой вызов backend; дополнительное `BRIDGE_LIVE_AGY_A2A_FULL_ACCESS=1` включает проверку через временный A2A-сервер. Команда: `python -m unittest tests.test_live_antigravity_permissions -v`. Если `agy` не обнаружен автоматически, задайте `BRIDGE_LIVE_AGY_COMMAND` с абсолютным путём к исполняемому файлу. Тест создаёт отдельный пустой каталог `.runtime/agy-full-access-*`, просит агента выполнить одну команду и сверяет созданный ею маркер; каталоги остаются для диагностики. Тест не меняет глобальные правила `agy`.
-
-> Статус: alpha. Мост предназначен для локальной разработки и слушает только `127.0.0.1`.
-
-## Архитектура
-
-```text
-Codex ── MCP ask_antigravity ── A2A ── agy CLI ── Antigravity harness/tools
-Antigravity ── MCP ask_codex ── A2A ── Codex SDK ── Codex harness/tools
-Application ── BridgeClient/HTTP ── A2A servers
-```
-
-Antigravity запускается через официальный `agy` CLI в headless режиме. Google указывает, что CLI использует общий агентный harness Antigravity и сохранённую авторизацию аккаунта. Codex запускается через официальный Python SDK, который управляет локальным Codex App Server.
-
-## Быстрый старт на Windows
-
-Требования:
-
-- Python 3.11+;
-- установленный и авторизованный Codex;
-- установленный и авторизованный [`agy` CLI](https://antigravity.google/docs/cli/install/).
-
-```powershell
-git clone https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge.git
-Set-Location codex-antigravity-a2a-bridge
-& .\Install.ps1
-& .\Configure-Mcp.ps1
-& .\Start-Bridge.ps1
-```
-
-Если Python установлен вне `PATH`, перед установкой задайте `BRIDGE_BOOTSTRAP_PYTHON` с полным путём к `python.exe`.
-
-Если `agy.exe` отсутствует в `PATH`, задайте путь перед запуском:
-
-```powershell
-$env:BRIDGE_AGY_COMMAND = 'C:\path\to\agy.exe'
-& .\Start-Bridge.ps1
-```
-
-Скрипт запуска поднимает:
-
-| Agent | A2A endpoint | Agent card |
-|---|---|---|
-| Codex | `http://127.0.0.1:8765` | `http://127.0.0.1:8765/.well-known/agent-card.json` |
-| Antigravity | `http://127.0.0.1:8766` | `http://127.0.0.1:8766/.well-known/agent-card.json` |
-
-Остановка: `& .\Stop-Bridge.ps1`. Логи и PID-файлы находятся в `.runtime/` и не попадают в Git.
-
-## MCP инструменты
-
-После `Configure-Mcp.ps1` появляются локальные конфигурации `.codex/config.toml` и `.agents/mcp_config.json` с абсолютным путём к Python окружению.
-
-| Tool | Назначение |
-|---|---|
-| `ask_antigravity(prompt, model?, reasoning_effort?)` | Поставить задачу Antigravity |
-| `ask_codex(prompt, model?, reasoning_effort?)` | Поставить задачу Codex |
-| `get_antigravity_info()` | Получить модели, effort и квоты Antigravity |
-| `get_codex_info()` | Получить модели, effort и квоты Codex |
-
-```text
-ask_antigravity(prompt="Проверь тесты", model="gemini-3.8-flash-medium", reasoning_effort="medium")
-ask_codex(prompt="Проверь тесты", model="gpt-5.6-terra", reasoning_effort="high")
-```
-
-Проверка качества кода вынесена в отдельную библиотеку `agent-code-checker`.
-Она использует Agent Bridge как зависимость; сам Bridge не содержит правил и оценок.
-
-## Выбор модели
-
-Поля `model` и `reasoning_effort` проходят в metadata A2A как
-`agent_bridge.model` и `agent_bridge.reasoning_effort`. Сервер передаёт их в
-`agy --model/--effort` либо в `Codex.thread_start(model=..., config={"model_reasoning_effort": ...})`.
-
-Это соглашение данного моста поверх расширяемых metadata A2A. Если параметры не указаны, каждый harness использует собственные текущие настройки. Упоминание модели или effort только внутри `prompt` не переключает настройки запуска.
-
-В актуальном каталоге Antigravity effort входит и в model ID (`...-low`,
-`...-medium`, `...-high`). При одновременной передаче `--model` и
-`--reasoning-effort` значения должны совпадать; `agy` отклоняет противоречивую
-пару. У Codex модель и reasoning effort задаются независимо в пределах
-совместимости, которую возвращает `get_codex_info`.
-
-Доступные ID следует получать из интерфейса возможностей или самого harness. Antigravity отклоняет неизвестный model ID. Каталог Codex содержит поддерживаемые reasoning efforts для каждой модели.
-
-## Модели, effort и usage
-
-Каждый сервер предоставляет read-only HTTP интерфейс:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8765/bridge/info
-Invoke-RestMethod http://127.0.0.1:8766/bridge/info
-
-Invoke-RestMethod http://127.0.0.1:8765/bridge/capabilities
-Invoke-RestMethod http://127.0.0.1:8766/bridge/usage
-```
-
-- `/bridge/info` — полный снимок;
-- `/bridge/identity` — backend, workspace и режим разрешений без запуска `agy`;
-- `/bridge/capabilities` — выбранная модель, effort и каталог моделей;
-- `/bridge/usage` — группы квот, использованный и оставшийся процент, окно и время сброса.
-
-Данные читаются при каждом запросе из harness без запуска агентной задачи:
-
-- Codex App Server: `model/list`, `config/read`, `account/rateLimits/read`;
-- Antigravity CLI: `models`, `/model`, `/effort`, `/usage`.
-
-Google сообщает, что read-only slash commands в print mode не расходуют модельную квоту. Antigravity возвращает общий доступный набор effort, но не таблицу совместимости по каждой модели. Codex возвращает усилия отдельно для каждой модели.
-
-## Python API
+### 1. Python API
 
 ```python
 import asyncio
-from agent_bridge import BridgeClient
-
+from pathlib import Path
+from agent_bridge import BridgeClient, HarnessLaunch, connect_harness
 
 async def main():
     client = BridgeClient()
-    info = await client.info("http://127.0.0.1:8766")
-    print(info["capabilities"]["selected_model"])
 
+    # Query live model catalog and quota information
+    info = await client.info("http://127.0.0.1:8766")
+    print("Selected model:", info["capabilities"]["selected_model"])
+
+    # One-shot task
     result = await client.ask(
         "http://127.0.0.1:8766",
-        "Проверь проект и предложи исправление ошибок тестов",
-        model="gemini-3.8-flash-medium",
-    )
-    print(result.state, result.task_id, result.text)
-
-
-asyncio.run(main())
-```
-
-Для связанных задач используйте одну сессию. `async with` закрывает её даже при
-ошибке; каждый `ask()` возвращает обычный `BridgeResult` со своим A2A task ID.
-Модель, effort и режим `read_only` фиксируются на всю сессию.
-
-```python
-import asyncio
-from agent_bridge import BridgeClient
-
-async def main():
-    bridge = BridgeClient()
-    async with bridge.session(
-        "http://127.0.0.1:8766",
+        "Explain the project structure and list entry points.",
         model="gemini-3.8-flash-medium",
         reasoning_effort="medium",
+    )
+    print(f"[{result.state}] Task {result.task_id}:\n{result.text}")
+
+    # Persistent multi-turn session (preserves conversation context)
+    async with client.session(
+        "http://127.0.0.1:8765",
+        model="gpt-5.6-terra",
+        reasoning_effort="high",
     ) as session:
-        first = await session.ask("Объясни коротко, что такое RLS.")
-        second = await session.ask("Теперь назови риск из предыдущего ответа.")
-        print(first.text, second.text)
-        print(second.usage)  # Токены только второго хода, не сумма всей сессии.
+        step1 = await session.ask("What database migrations are pending?")
+        step2 = await session.ask("Generate SQL to apply the first migration.")
+        print("Step 2 response:", step2.text)
+        print("Step 2 token usage:", step2.usage)
+
+    # Managed peer lifecycle: reuse existing server or start a temporary one
+    launch = HarnessLaunch(
+        name="antigravity",
+        url="http://127.0.0.1:8766",
+        workspace=Path.cwd(),
+    )
+    async with connect_harness(launch) as conn:
+        print("Connected to:", conn.url, "(spawned temporary:", conn.started, ")")
 
 asyncio.run(main())
 ```
 
-Обычный `bridge.ask(...)` по-прежнему создаёт независимую беседу. Сессия
-принадлежит одному серверу и одному клиентскому процессу; она изолирована от
-других сессий. Если не вызвать `close()`, сервер закроет её после 30 минут
-бездействия или при остановке. После перезапуска сервера старую сессию
-продолжить нельзя. Antigravity SDK mode не поддерживает сессии; используйте
-основной CLI mode. В длинных беседах история может увеличивать расход входных
-токенов, поэтому сравнивайте usage, а не предполагайте экономию заранее.
-
-CLI:
+### 2. Command-Line Interface (CLI)
 
 ```powershell
-& .\.venv\Scripts\python.exe -m agent_bridge.cli info http://127.0.0.1:8765
-& .\.venv\Scripts\python.exe -m agent_bridge.cli ask http://127.0.0.1:8766 'Проверь проект' `
-  --model gemini-3.8-flash-medium --reasoning-effort medium
+# Discover locally installed harnesses without starting models
+agent-bridge discover
+
+# Start an A2A server for Codex
+agent-bridge serve codex --workspace . --port 8765
+
+# Start an A2A server for Antigravity (CLI mode)
+agent-bridge serve antigravity --workspace . --port 8766
+
+# Start an A2A server from a profile (OpenCode or Claude Code)
+agent-bridge serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
+
+# Query server capabilities, models, and quota limits
+agent-bridge info http://127.0.0.1:8765
+
+# Send a task from the command line
+agent-bridge ask http://127.0.0.1:8765 "Summarize recent changes" --model gpt-5.6-terra
 ```
 
-## Необязательный Antigravity SDK backend
+### 3. Model Context Protocol (MCP)
 
-SDK backend устанавливается отдельно из-за несовместимых версий Protobuf:
+Start the stdio MCP server:
+```powershell
+agent-bridge-mcp
+# or: python -m agent_bridge.mcp_server
+```
+
+Available MCP tools:
+- `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?)`: Routes requests to any agent mapped in the `BRIDGE_AGENTS_JSON` environment variable.
+- `get_agent_info(agent_id)`: Fetches live models and quotas for the profile agent.
+- `ask_antigravity(prompt, model?, reasoning_effort?, workspace?, tool_policy?, turn_timeout_seconds=300)`: Delegates directly to Antigravity (`BRIDGE_ANTIGRAVITY_URL` or a managed workspace server).
+- `ask_codex(prompt, model?, reasoning_effort?)`: Delegates directly to Codex (`BRIDGE_CODEX_URL`).
+- `get_antigravity_info(workspace?)` & `get_codex_info()`: Read live capabilities and quota without burning model turns.
+
+---
+
+## Key Concepts
+
+### Harness Discovery
+Run `agent-bridge discover` (or `discover_harnesses()` in Python) to inspect local executables without launching processes or loading weights. It checks `PATH` and platform-specific standard installation directories (`%LOCALAPPDATA%\agy\bin`, npm global directories, etc.). Custom paths can be specified via environment variables (`BRIDGE_AGY_COMMAND`) or CLI flags (`--agy-command`, `--opencode-command`, `--claude-command`).
+
+### Model & Reasoning Selection
+Model parameters are passed as A2A metadata keys (`agent_bridge.model`, `agent_bridge.reasoning_effort`):
+- **Antigravity:** Reasoning effort is embedded in model IDs (e.g. `gemini-3.8-flash-medium`). If both `--model` and `--effort` are passed, they must match.
+- **Codex:** Model and reasoning effort are configured independently according to the catalog returned by `get_codex_info`.
+- **OpenCode & Claude Code:** Profiles define `allowed_models` and optional `reasoning_efforts` (such as model variants for Ollama or CLI flags).
+
+### Workspaces & Session Isolation
+- Every server binds to a strictly validated, canonical workspace directory.
+- `connect_harness()` verifies that an existing server's workspace matches the caller's target workspace before reusing it.
+- **Sessions:** `BridgeSession` maintains a stateful conversation across multiple `ask()` calls. Conversation settings (model, effort, tool policy) are pinned at session creation and cannot be changed mid-session. Idle sessions are cleaned up automatically after 30 minutes.
+
+### Safety & Tool Policies
+Agent Bridge defines four standardized tool policies:
+- `no_tools`: Disables tool invocations entirely.
+- `read_only`: Permits non-mutating search and file reading.
+- `workspace_write`: Allows editing files within the designated workspace.
+- `full_access`: Explicitly unclamps all tool restrictions and approval prompts.
+
+> [!WARNING]
+> `full_access` (or `--agy-dangerously-skip-permissions` for Antigravity) removes all tool approval gates across the entire server for all requests. Never enable this mode on untrusted tasks or expose endpoints beyond loopback. Antigravity CLI does not enforce `read_only` in headless mode and will reject such requests.
+
+---
+
+## Testing
+
+Agent Bridge provides a comprehensive offline test suite using fake backends that execute without network access, credentials, or model quota consumption:
 
 ```powershell
-$env:BRIDGE_INSTALL_AGY_SDK = '1'
-& .\Install.ps1
-$env:BRIDGE_AGY_MODE = 'sdk'
-& .\Start-Bridge.ps1
+python -m unittest discover -s tests -v
 ```
 
-Основной сценарий с аккаунтом и квотами Antigravity использует `agy` CLI. SDK backend может иметь другую схему авторизации и не предоставляет каталог или квоты CLI; info endpoint вернёт `available: false`.
+Opt-in integration tests against real models can be executed by specifying target environments (e.g. `BRIDGE_LIVE_OLLAMA_MODEL=qwen3.5:9b` or `BRIDGE_LIVE_AGY_FULL_ACCESS=1`). See [CONTRIBUTING.md](CONTRIBUTING.md) for full instructions.
 
-## Тесты
+---
 
-```powershell
-& .\.venv\Scripts\python.exe -m unittest discover -s .\tests -v
-```
+## Documentation Index
 
-Тесты используют fake backend и не расходуют лимиты моделей. GitLab CI выполняет компиляцию пакета и тот же набор тестов.
-
-## Ограничения и безопасность
-
-- Каждый одиночный `ask` создаёт новую беседу; `bridge.session(...)` продолжает
-  одну беседу между вызовами, но не подключается к открытому диалогу IDE.
-- Передаются текстовая задача и ответ. Общие файлы доступны агентам через workspace.
-- A2A task store находится в памяти и очищается при перезапуске.
-- Серверы не имеют сетевой аутентификации. Не публикуйте порты 8765/8766 без TLS и auth.
-- Инструменты агента подчиняются sandbox и permission policy соответствующего harness.
-- Usage endpoint раскрывает локальным процессам состояние квот аккаунта.
-- `config/read` и `account/rateLimits/read` вызываются через типизированный низкоуровневый транспорт Codex SDK, пока высокоуровневый Python API не предоставляет их напрямую.
-
-См. [SECURITY.md](SECURITY.md) и [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Документация
-
-- [A2A Protocol](https://a2a-protocol.org/latest/)
-- [Antigravity CLI overview](https://antigravity.google/docs/cli/overview/)
-- [Antigravity headless mode](https://antigravity.google/docs/cli/headless/)
-- [Antigravity MCP](https://antigravity.google/docs/mcp/)
-- [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)
-- [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+- [Getting Started Guide](docs/getting-started.md)
+- [API Reference](docs/api.md)
+- [Permissions & Safety Guide](docs/permissions.md)
+- [Architecture & Protocol Design](docs/architecture.md)
+- [Troubleshooting & Diagnostics](docs/troubleshooting.md)
+- [Contributing Guidelines](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
