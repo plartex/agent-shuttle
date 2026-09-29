@@ -28,7 +28,7 @@ foreach ($agent in @(@{ Name = 'codex'; Port = 8765 }, @{ Name = 'antigravity'; 
     } else {
         $occupied = Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $agent.Port -State Listen -ErrorAction SilentlyContinue
         if ($occupied) {
-            throw "Refusing to discard $pidFile: port $($agent.Port) is listening but identity is unavailable"
+            throw "Refusing to discard ${pidFile}: port $($agent.Port) is listening but identity is unavailable"
         }
         Write-Output "Removed stale $($agent.Name) PID file (server is not reachable)"
     }
