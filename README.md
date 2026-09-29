@@ -10,9 +10,6 @@ Agent Bridge is a lightweight local interoperability bridge that connects autono
 
 It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and enforce tool permission boundaries—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
 
-> [!NOTE]
-> **Separation of Concerns:** Agent Bridge provides transport, process lifecycle supervision, session state, and safety boundaries. It contains no linting rules, code smell heuristics, or grading logic. Higher-level quality and review suites (such as `agent-code-checker`) use Agent Bridge purely as a foundation library.
-
 ---
 
 ## Supported Agent Harnesses
