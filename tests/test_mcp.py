@@ -26,6 +26,10 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
                     if tool.name.startswith("ask_"):
                         self.assertIn("model", tool.inputSchema["properties"])
                         self.assertIn("reasoning_effort", tool.inputSchema["properties"])
+                    if tool.name == "ask_antigravity":
+                        self.assertIn("workspace", tool.inputSchema["properties"])
+                        self.assertIn("tool_policy", tool.inputSchema["properties"])
+                        self.assertIn("turn_timeout_seconds", tool.inputSchema["properties"])
         self.assertEqual(
             names,
             {

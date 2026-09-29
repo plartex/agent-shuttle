@@ -5,11 +5,22 @@ from __future__ import annotations
 import os
 import json
 import re
+import socket
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 
 from .client import BridgeClient
+from .managed import HarnessLaunch, connect_harness
+
+
+def _debug(stage: str) -> None:
+    if os.environ.get("BRIDGE_DEBUG") == "1":
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        print(f"[agent-bridge] {stamp} {stage}", file=sys.stderr, flush=True)
 
 
 mcp = FastMCP(
@@ -31,6 +42,7 @@ async def _ask(
     prompt: str,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    tool_policy: str | None = None,
 ) -> dict:
     url = os.environ.get(env_name)
     if not url:
@@ -40,6 +52,7 @@ async def _ask(
         prompt,
         model=model,
         reasoning_effort=reasoning_effort,
+        tool_policy=tool_policy,
     )
     return {
         "task_id": result.task_id,
@@ -48,6 +61,42 @@ async def _ask(
         "text": result.text,
         "usage": result.usage,
         "details": result.details,
+    }
+
+
+def _free_local_url() -> str:
+    """Choose an isolated loopback port for a per-call managed Bridge."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{listener.getsockname()[1]}"
+
+
+async def _managed_antigravity(
+    prompt: str, workspace: str, model: str | None,
+    reasoning_effort: str | None, tool_policy: str | None,
+    turn_timeout_seconds: float,
+) -> dict:
+    root = Path(workspace).resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("workspace must be a directory")
+    launch = HarnessLaunch(
+        "antigravity", _free_local_url(), root,
+        model=model, tool_policy=tool_policy,
+        agy_turn_timeout_seconds=turn_timeout_seconds,
+    )
+    _debug("antigravity: starting temporary bridge")
+    async with connect_harness(launch) as peer:
+        _debug("antigravity: bridge ready, sending task")
+        result = await BridgeClient().ask(
+            peer.url, prompt, model=model, reasoning_effort=reasoning_effort,
+            tool_policy=tool_policy,
+        )
+        _debug(f"antigravity: task returned {result.state}")
+    _debug("antigravity: temporary bridge stopped")
+    return {
+        "task_id": result.task_id, "context_id": result.context_id,
+        "state": result.state, "text": result.text,
+        "usage": result.usage, "details": result.details,
     }
 
 
@@ -103,9 +152,20 @@ async def ask_antigravity(
     prompt: str,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    workspace: str | None = None,
+    tool_policy: str | None = None,
+    turn_timeout_seconds: float = 300,
 ) -> dict:
-    """Delegate to Antigravity. model and reasoning_effort map to agy launch flags."""
-    return await _ask("BRIDGE_ANTIGRAVITY_URL", prompt, model, reasoning_effort)
+    """Delegate to Antigravity; workspace starts an isolated temporary Bridge."""
+    selected_workspace = workspace if workspace is not None else os.environ.get("BRIDGE_ANTIGRAVITY_WORKSPACE")
+    if selected_workspace is not None:
+        return await _managed_antigravity(
+            prompt, selected_workspace, model, reasoning_effort,
+            tool_policy, turn_timeout_seconds,
+        )
+    if turn_timeout_seconds != 300:
+        raise ValueError("turn_timeout_seconds requires a managed Antigravity workspace")
+    return await _ask("BRIDGE_ANTIGRAVITY_URL", prompt, model, reasoning_effort, tool_policy)
 
 
 @mcp.tool()
@@ -119,8 +179,15 @@ async def ask_codex(
 
 
 @mcp.tool()
-async def get_antigravity_info() -> dict:
+async def get_antigravity_info(workspace: str | None = None) -> dict:
     """Read Antigravity's current models, effort options and account quota without an agent turn."""
+    selected_workspace = workspace if workspace is not None else os.environ.get("BRIDGE_ANTIGRAVITY_WORKSPACE")
+    if selected_workspace is not None:
+        root = Path(selected_workspace).resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("workspace must be a directory")
+        async with connect_harness(HarnessLaunch("antigravity", _free_local_url(), root)) as peer:
+            return await BridgeClient().info(peer.url)
     url = os.environ.get("BRIDGE_ANTIGRAVITY_URL")
     if not url:
         raise RuntimeError("Set BRIDGE_ANTIGRAVITY_URL to the local A2A server URL")
