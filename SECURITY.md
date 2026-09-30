@@ -48,6 +48,6 @@ The `full_access` policy (and `--agy-dangerously-skip-permissions` for Antigravi
 
 - **Reporting Channel:**  
   No dedicated private security reporting email address is currently configured for this repository.
-- If you discover a potential security vulnerability, please submit it through the GitLab project's confidential issue reporting feature or security advisory mechanism (if enabled on the repository), or contact the repository owner directly.
+- If you discover a potential security vulnerability, use GitHub's private vulnerability reporting feature if it is enabled for the repository, or contact the repository owner privately.
 - **Responsible Disclosure:**  
   Do **not** disclose security vulnerabilities, access tokens, API credentials, or exploitable payloads in public issue discussions.

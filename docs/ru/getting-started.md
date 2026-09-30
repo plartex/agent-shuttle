@@ -32,8 +32,8 @@ Agent Shuttle взаимодействует с локальными агент�
 
 ```powershell
 # 1. Клонирование репозитория
-git clone https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge.git
-Set-Location codex-antigravity-a2a-bridge
+git clone https://github.com/Plartex/agent-shuttle.git
+Set-Location agent-shuttle
 
 # 2. Инициализация виртуального окружения и установка зависимостей
 & .\Install-Shuttle.ps1
@@ -44,8 +44,6 @@ Set-Location codex-antigravity-a2a-bridge
 # 4. Запуск фоновых серверов Codex (порт 8765) и Antigravity (порт 8766)
 & .\Start-Shuttle.ps1
 ```
-
-Адрес GitLab-репозитория и имя каталога чекаута пока прежние; устанавливаемый пакет и CLI называются Agent Shuttle.
 
 Для остановки серверов:
 ```powershell
