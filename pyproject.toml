@@ -29,9 +29,9 @@ dependencies = [
 test = ["coverage>=7.6,<9"]
 
 [project.urls]
-Homepage = "https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge"
-Repository = "https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge.git"
-Issues = "https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge/-/issues"
+Homepage = "https://github.com/Plartex/agent-shuttle"
+Repository = "https://github.com/Plartex/agent-shuttle"
+Issues = "https://github.com/Plartex/agent-shuttle/issues"
 
 [project.scripts]
 agent-shuttle = "agent_shuttle.cli:main"

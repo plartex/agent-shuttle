@@ -1,5 +1,7 @@
 # Agent Shuttle
 
+[![Тесты](https://github.com/Plartex/agent-shuttle/actions/workflows/tests.yml/badge.svg)](https://github.com/Plartex/agent-shuttle/actions/workflows/tests.yml)
+[![Лицензия MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![A2A Protocol 1.0](https://img.shields.io/badge/A2A-1.0_JSON--RPC-blue)](https://a2a-protocol.org/latest/)
 [![MCP](https://img.shields.io/badge/MCP-tools-green)](https://modelcontextprotocol.io/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
@@ -26,6 +28,15 @@ Agent Shuttle даёт Python-приложениям единый способ �
 ## Установка
 
 Agent Shuttle требует **Python 3.11+** и работает на Windows, Linux и macOS.
+
+### Установка с GitHub
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install "git+https://github.com/Plartex/agent-shuttle.git"
+```
+
+Пакет пока не опубликован в PyPI. Для разработки клонируйте репозиторий и установите его в редактируемом режиме.
 
 ### Установка из локального чекаута
 

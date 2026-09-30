@@ -1,5 +1,7 @@
 # Agent Shuttle
 
+[![Tests](https://github.com/Plartex/agent-shuttle/actions/workflows/tests.yml/badge.svg)](https://github.com/Plartex/agent-shuttle/actions/workflows/tests.yml)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![A2A Protocol 1.0](https://img.shields.io/badge/A2A-1.0_JSON--RPC-blue)](https://a2a-protocol.org/latest/)
 [![MCP](https://img.shields.io/badge/MCP-tools-green)](https://modelcontextprotocol.io/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
@@ -26,6 +28,15 @@ It allows agents and external applications to delegate tasks to peer agents, reu
 ## Installation
 
 Agent Shuttle requires **Python 3.11+** and runs on Windows, Linux, and macOS.
+
+### Install from GitHub
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install "git+https://github.com/Plartex/agent-shuttle.git"
+```
+
+The package is not published on PyPI yet. For development, clone the repository and install it in editable mode.
 
 ### Install from Local Checkout
 

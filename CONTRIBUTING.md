@@ -43,7 +43,7 @@ The default test suite uses mock and fake backends. It runs completely offline w
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Before opening a merge request or committing changes, ensure that all tests in this suite pass.
+Before opening a pull request or committing changes, ensure that all tests in this suite pass.
 
 ### 2. Opt-In Live Integration Tests
 

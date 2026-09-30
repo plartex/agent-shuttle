@@ -32,8 +32,8 @@ If you are developing or running Agent Shuttle directly from a git clone:
 
 ```powershell
 # 1. Clone the repository
-git clone https://gitlab.com/kkaastr/codex-antigravity-a2a-bridge.git
-Set-Location codex-antigravity-a2a-bridge
+git clone https://github.com/Plartex/agent-shuttle.git
+Set-Location agent-shuttle
 
 # 2. Bootstrap virtual environment and install dependencies
 & .\Install-Shuttle.ps1
@@ -44,8 +44,6 @@ Set-Location codex-antigravity-a2a-bridge
 # 4. Start background servers for Codex (8765) and Antigravity (8766)
 & .\Start-Shuttle.ps1
 ```
-
-The GitLab repository URL and checkout directory still use the former name; the installed package and CLI are Agent Shuttle.
 
 To stop background servers:
 ```powershell
