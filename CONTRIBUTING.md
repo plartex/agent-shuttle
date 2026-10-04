@@ -1,22 +1,23 @@
-# Contributing to Agent Bridge
+# Contributing to Agent Shuttle
 
 [Russian version / Русская версия](CONTRIBUTING.ru.md)
 
-Thank you for contributing to Agent Bridge. This project maintains a modular, local-first bridge between heterogeneous coding agent harnesses. Please follow these guidelines for development, testing, and documentation.
+Thank you for contributing to Agent Shuttle. This project maintains a modular, local-first bridge between heterogeneous coding agent harnesses. Please follow these guidelines for development, testing, and documentation.
 
 ---
 
 ## Development Setup
 
-1. **Virtual Environment Setup (Windows):**
+1. **Virtual Environment Setup:**
    ```powershell
-   & .\Install.ps1
+   python -m venv .venv
+   & .\.venv\Scripts\python.exe -m pip install -e ".[test]"
    ```
-   This creates `.venv` and installs the package in editable mode (`pip install -e .`).
+   On Linux or macOS, use `.venv/bin/python` in place of `.venv\Scripts\python.exe`.
 
 2. **Clean Repository Hygiene:**
    - Keep account credentials, personal API keys, and local binary executables out of Git.
-   - Generated configuration files (`.codex/config.toml`, `.agents/mcp_config.json`) and runtime artifacts (`.runtime/`) are ignored by `.gitignore` and must never be committed.
+   - Local configuration files (`.codex/config.toml`, `.agents/mcp_config.json`) and runtime artifacts (`.runtime/`) are ignored by `.gitignore` and must never be committed.
 
 ---
 
@@ -43,7 +44,7 @@ The default test suite uses mock and fake backends. It runs completely offline w
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Before opening a merge request or committing changes, ensure that all tests in this suite pass.
+Before opening a pull request or committing changes, ensure that all tests in this suite pass.
 
 ### 2. Opt-In Live Integration Tests
 
@@ -83,4 +84,4 @@ When updating or adding documentation:
 3. **Relative Link Integrity:**  
    Check that all relative Markdown links resolve correctly.
 4. **Code Verification:**  
-   Verify that all CLI commands, parameter names, function signatures, and JSON schemas in documentation match the current implementation in `agent_bridge/`.
+   Verify that all CLI commands, parameter names, function signatures, and JSON schemas in documentation match the current implementation in `src/agent_shuttle/`.

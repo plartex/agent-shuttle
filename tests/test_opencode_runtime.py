@@ -3,12 +3,13 @@ import unittest
 import asyncio
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 
-from agent_bridge.opencode_runtime import OpenCodeRuntime, _child_env, _inline_config, _resolve_command, _usage
-from agent_bridge.profiles import AgentProfile, ToolPolicy
+from agent_shuttle.opencode_runtime import OpenCodeRuntime, _child_env, _inline_config, _resolve_command, _usage
+from agent_shuttle.profiles import AgentProfile, ToolPolicy
 
 
 class OpenCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -189,14 +190,15 @@ class OpenCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             captured.append((args, kwargs))
             return FakeProcess()
 
-        with patch("agent_bridge.opencode_runtime.asyncio.create_subprocess_exec", side_effect=spawn), \
-             patch("agent_bridge.opencode_runtime.httpx.AsyncClient", FakeClient):
+        with patch("agent_shuttle.opencode_runtime.asyncio.create_subprocess_exec", side_effect=spawn), \
+             patch("agent_shuttle.opencode_runtime.httpx.AsyncClient", FakeClient):
             runtime = OpenCodeRuntime(profile)
             session = await runtime.open_session(profile.resolve(None, None, None))
             await session.close()
             await runtime.close()
         args, kwargs = captured[0]
-        self.assertEqual(args[:3], ("opencode", "--pure", "serve"))
+        self.assertEqual(Path(args[0]).stem, "opencode")
+        self.assertEqual(args[1:3], ("--pure", "serve"))
         self.assertTrue(kwargs["env"]["OPENCODE_SERVER_PASSWORD"])
         config = json.loads(kwargs["env"]["OPENCODE_CONFIG_CONTENT"])
         self.assertEqual(config["permission"], {"*": "deny"})
@@ -217,6 +219,7 @@ class OpenCodeConfigTests(unittest.TestCase):
             self.assertEqual(config["permission"], {"*": "allow"})
             self.assertNotIn("read-only", config["agent"]["bridge"]["prompt"])
 
+    @unittest.skipUnless(os.name == "nt", "Windows npm shim")
     def test_windows_npm_shim_resolves_real_executable(self):
         with tempfile.TemporaryDirectory() as folder:
             root = __import__("pathlib").Path(folder)

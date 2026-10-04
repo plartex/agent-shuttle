@@ -1,9 +1,9 @@
 import tempfile
 import unittest
 
-from agent_bridge.profiled import ProfiledBackend, ProfiledInfo
-from agent_bridge.profiles import AgentProfile
-from agent_bridge.registry import build_profile
+from agent_shuttle.profiled import ProfiledBackend, ProfiledInfo
+from agent_shuttle.profiles import AgentProfile
+from agent_shuttle.registry import build_profile
 
 
 class RegistryTests(unittest.TestCase):

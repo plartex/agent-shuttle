@@ -49,6 +49,13 @@ class AntigravityCliInfo:
         self.timeout_seconds = timeout_seconds
         self._read_lock = asyncio.Lock()
 
+    async def check_ready(self) -> None:
+        """Verify the CLI account before the server accepts tasks, without a turn."""
+        data = await self._read("--output-format", "json", "models")
+        models = data.get("models")
+        if not isinstance(models, list) or not models:
+            raise RuntimeError("Antigravity returned an empty or invalid model catalog during startup")
+
     async def _read(self, *args: str) -> dict:
         # Multiple HTTP info requests must not start competing agy processes.
         async with self._read_lock:
@@ -180,6 +187,12 @@ class CodexInfo:
                     selected = next((model for model in catalog.data if model.is_default), None)
                 data["capabilities"] = {
                     "selected_model": configured_model or (selected.model if selected else None),
+                    "model_access_note": (
+                        "selected_model is the local Codex configuration, not an account access check. "
+                        "The App Server model catalog may be cached; a listed model can still be "
+                        "rejected for the signed-in ChatGPT account. Omit the model override unless "
+                        "the caller explicitly requests it."
+                    ),
                     "selected_effort": _enum_value(
                         effective.config.model_reasoning_effort
                         or (selected.default_reasoning_effort if selected else None)

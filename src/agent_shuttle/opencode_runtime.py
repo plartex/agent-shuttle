@@ -16,6 +16,7 @@ import httpx
 
 from .backends import BackendResponse
 from .profiles import AgentProfile, ProfileSelection, ToolPolicy
+from .runtime_context import worker_env
 
 
 _READ_TOOLS = {"read", "glob", "grep", "lsp"}
@@ -51,7 +52,7 @@ def _inline_config(profile: AgentProfile, policy: ToolPolicy) -> str:
     permission = _permissions(policy)
     bridge_agent = {
         "mode": "primary",
-        "description": "Agent Bridge constrained analysis runtime",
+        "description": "Agent Shuttle constrained analysis runtime",
         "prompt": (
             "You are a concise analysis assistant. Answer the user's request directly. "
             "Do not call tools or ask for permissions."
@@ -103,7 +104,7 @@ def _child_env(profile: AgentProfile, policy: ToolPolicy, password: str) -> dict
         if profile.credential_env not in os.environ:
             raise RuntimeError(f"Missing credential environment variable {profile.credential_env}")
         env[profile.credential_env] = os.environ[profile.credential_env]
-    return env
+    return worker_env(env)
 
 
 def _usage(info: dict) -> tuple[dict[str, int], dict]:
@@ -206,7 +207,7 @@ class OpenCodeRuntime:
 
     async def open_session(self, selection: ProfileSelection) -> "OpenCodeSession":
         server = await self._server(selection.tool_policy)
-        response = await server.client.post("/session", json={"title": "Agent Bridge"})
+        response = await server.client.post("/session", json={"title": "Agent Shuttle"})
         response.raise_for_status()
         session_id = response.json().get("id")
         if not isinstance(session_id, str) or not session_id:
