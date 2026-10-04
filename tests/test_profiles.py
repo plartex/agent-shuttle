@@ -5,7 +5,7 @@ import unittest
 import json
 from pathlib import Path
 
-from agent_bridge.profiles import AgentProfile, ToolPolicy
+from agent_shuttle.profiles import AgentProfile, ToolPolicy
 
 
 class AgentProfileTests(unittest.TestCase):

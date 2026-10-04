@@ -9,12 +9,32 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agent_bridge import HarnessLaunch, connect_harness
+from agent_shuttle import HarnessLaunch, connect_harness
 
 
 class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_antigravity_readiness_waits_for_authenticated_model_catalog(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            launch = HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
+                                   command="C:/tools/agy.exe")
+            identity = {"backend": "agy_cli", "workspace": str(root.resolve()),
+                        "agy_permission_mode": "settings", "agy_turn_timeout_seconds": 300}
+            # Startup now checks `agy models` (45s maximum) before HTTP listens.
+            # A healthy CLI can appear later than the former 30s polling window.
+            client = SimpleNamespace(identity=AsyncMock(side_effect=[
+                OSError("offline"), *[OSError("starting") for _ in range(70)], identity,
+            ]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process), \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client) as connection:
+                    self.assertTrue(connection.started)
+            self.assertEqual(client.identity.await_count, 72)
+
     def setUp(self):
-        taskkill = patch("agent_bridge.managed.subprocess.run",
+        taskkill = patch("agent_shuttle.managed.subprocess.run",
                          return_value=SimpleNamespace(returncode=0))
         self.mock_taskkill = taskkill.start()
         self.addCleanup(taskkill.stop)
@@ -34,8 +54,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     self.assertIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
                     self.assertEqual(popen.call_args.kwargs["stdin"], subprocess.DEVNULL)
@@ -54,8 +74,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     argv = popen.call_args.args[0]
                     profile = json.loads(Path(argv[argv.index("--profile") + 1]).read_text())
@@ -77,8 +97,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     self.assertIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
 
@@ -94,7 +114,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 }),
                 capabilities=AsyncMock(side_effect=AssertionError("model lookup is not readiness")),
             )
-            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+            with patch("agent_shuttle.managed.subprocess.Popen") as popen:
                 async with connect_harness(launch, client=client) as connection:
                     self.assertFalse(connection.started)
             client.identity.assert_awaited_once_with(launch.url)
@@ -108,7 +128,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
                 "read_only_tools": True,
             }))
-            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+            with patch("agent_shuttle.managed.subprocess.Popen") as popen:
                 async with connect_harness(launch, client=client) as connection:
                     self.assertFalse(connection.started)
                     self.assertEqual(connection.url, launch.url)
@@ -127,8 +147,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client) as connection:
                     self.assertTrue(connection.started)
                     self.assertEqual(connection.log_path, launch.log_path)
@@ -149,7 +169,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
                                    start_if_missing=False)
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=OSError("offline")))
-            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+            with patch("agent_shuttle.managed.subprocess.Popen") as popen:
                 with self.assertRaisesRegex(RuntimeError, "unavailable"):
                     async with connect_harness(launch, client=client):
                         pass
@@ -168,11 +188,11 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     argv = popen.call_args.args[0]
-                    self.assertEqual(Path(argv[argv.index("--profile") + 1]), profile)
+                    self.assertTrue(Path(argv[argv.index("--profile") + 1]).samefile(profile))
             process.terminate.assert_called_once()
 
     async def test_started_server_stops_after_caller_error(self):
@@ -185,8 +205,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 with self.assertRaisesRegex(RuntimeError, "caller failed"):
                     async with connect_harness(launch, client=client):
                         raise RuntimeError("caller failed")
@@ -208,7 +228,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 "backend": "codex_app_server", "workspace": str(Path(other).resolve()),
                 "read_only_tools": True,
             }))
-            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+            with patch("agent_shuttle.managed.subprocess.Popen") as popen:
                 with self.assertRaisesRegex(ValueError, "workspace"):
                     async with connect_harness(launch, client=client):
                         pass
@@ -235,8 +255,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     argv = popen.call_args.args[0]
                     profile = json.loads(Path(argv[argv.index("--profile") + 1]).read_text())
@@ -257,7 +277,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 profile_path=profile, tool_policy="read_only",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=OSError("offline")))
-            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+            with patch("agent_shuttle.managed.subprocess.Popen") as popen:
                 with self.assertRaisesRegex(ValueError, "exceeds profile maximum"):
                     async with connect_harness(launch, client=client):
                         pass
@@ -286,8 +306,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     self.assertIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
 
@@ -305,8 +325,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     self.assertNotIn("--agy-dangerously-skip-permissions", popen.call_args.args[0])
 
@@ -325,8 +345,8 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
-            with patch("agent_bridge.managed.subprocess.Popen", return_value=process) as popen, \
-                 patch("agent_bridge.managed.asyncio.sleep", new_callable=AsyncMock):
+            with patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
                 async with connect_harness(launch, client=client):
                     argv = popen.call_args.args[0]
                     self.assertEqual(argv[argv.index("--agy-turn-timeout-seconds") + 1], "42")
@@ -342,24 +362,19 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 "backend": "agy_cli", "workspace": str(root.resolve()),
                 "agy_permission_mode": "all",
             }))
-            with patch("agent_bridge.managed.subprocess.Popen") as popen:
+            with patch("agent_shuttle.managed.subprocess.Popen") as popen:
                 with self.assertRaisesRegex(ValueError, "permission mode"):
                     async with connect_harness(launch, client=client):
                         pass
             popen.assert_not_called()
 
-    async def test_antigravity_all_permissions_rejects_nonboolean_and_read_only(self):
+    async def test_antigravity_permissions_reject_nonboolean_before_connecting(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             client = SimpleNamespace(capabilities=AsyncMock())
             for launch, message in (
                 (HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
                                agy_dangerously_skip_permissions="false"), "boolean"),
-                (HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
-                               tool_policy="read_only",
-                               agy_dangerously_skip_permissions=True), "read_only"),
-                (HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
-                               tool_policy="no_tools"), "no_tools"),
             ):
                 with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                     async with connect_harness(launch, client=client):

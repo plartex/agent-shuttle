@@ -9,8 +9,8 @@ test:
     - python -m pip install --upgrade pip
     - python -m pip install -e '.[test]'
   script:
-    - python -m compileall -q agent_bridge
-    - python -m coverage run --branch --source=agent_bridge -m unittest discover -s tests -v
+    - python -m compileall -q src/agent_shuttle
+    - python -m coverage run --branch --source=agent_shuttle -m unittest discover -s tests -v
     - python -m coverage report --fail-under=90
   cache:
     paths:

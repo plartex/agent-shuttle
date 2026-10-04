@@ -10,7 +10,7 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
     async def test_remote_agent_tools_are_listed(self):
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "agent_bridge.mcp_server"],
+            args=["-m", "agent_shuttle.mcp_server"],
             env={
                 **os.environ,
                 "BRIDGE_CODEX_URL": "http://127.0.0.1:8765",
@@ -35,6 +35,7 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
             {
                 "ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info",
                 "ask_agent", "get_agent_info",
+                "submit_task", "check_task", "wait_task", "cancel_task", "get_result", "get_transcript",
             },
         )
 

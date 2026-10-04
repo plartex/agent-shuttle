@@ -2,13 +2,13 @@
 
 [Russian version / Русская версия](ru/troubleshooting.md)
 
-This guide covers common operational issues, diagnostic procedures, error messages, and debugging strategies across all supported agent harnesses in Agent Bridge.
+This guide covers common operational issues, diagnostic procedures, error messages, and debugging strategies across all supported agent harnesses in Agent Shuttle.
 
 ---
 
 ## Diagnosing Antigravity CLI vs. Bridge
 
-When an Antigravity task fails or appears to hang, it is crucial to determine whether the issue lies in Agent Bridge or the upstream `agy` CLI.
+When an Antigravity task fails or appears to hang, it is crucial to determine whether the issue lies in Agent Shuttle or the upstream `agy` CLI.
 
 ### 1. Test Bridge Liveness First (`/bridge/identity`)
 
@@ -23,13 +23,13 @@ Invoke-RestMethod http://127.0.0.1:8766/bridge/identity
 - **If `/bridge/identity` returns 404:**  
   The running server is an older Bridge version. Stop the process and restart it with the current release.
 - **If `/bridge/identity` times out or fails to connect:**  
-  The Bridge process is either dead, blocked by a local firewall, or has hung. Inspect `.runtime/antigravity.err.log` and verify the process ID in `.runtime/antigravity.pid`.
+  A persistent Bridge process may be stopped, blocked by a local firewall, or hung. Inspect the terminal where you ran `agent-shuttle serve antigravity --workspace . --port 8766`. If you use MCP without a persistent server, no listener is expected between requests.
 
 ---
 
 ### Authentication belongs to the CLI process, not the desktop app
 
-`AntigravityAuthenticationError` means `agy` could not use its account in the context where Bridge launched it. If the diagnostic mentions `Access is denied` under `.gemini/antigravity-cli`, a restricted or sandboxed launcher is a likely cause; it does **not** prove that the user is signed out. Check with `agy models` in an ordinary terminal under the same Windows account. If that succeeds, start `Start-Bridge.ps1` from that terminal rather than from a sandboxed executor, and retry the task. If it also fails, start `agy` interactively and complete its sign-in flow. Do not copy credentials into the project or disable sandboxing globally.
+`AntigravityAuthenticationError` means `agy` could not use its account in the context where Bridge launched it. If the diagnostic mentions `Access is denied` under `.gemini/antigravity-cli`, a restricted or sandboxed launcher is a likely cause; it does **not** prove that the user is signed out. Check with `agy models` in an ordinary terminal under the same Windows account. If that succeeds, run `agent-shuttle serve antigravity --workspace . --port 8766` from that terminal rather than from a sandboxed executor, and retry the task. If it also fails, start `agy` interactively and complete its sign-in flow. Do not copy credentials into the project or disable sandboxing globally.
 
 ---
 
@@ -42,6 +42,11 @@ The task fails with `AntigravityPermissionDenied: agy denied a required tool (..
 In headless mode (`-p`), the Antigravity CLI cannot prompt the user interactively with approval dialogs. If an action is governed by an `ask` or `deny` rule in your settings, `agy` denies the tool execution. Upstream `agy` frequently exits with return code `0` and reports `status: "SUCCESS"` even though the tool was blocked and the output is truncated or empty.
 
 **Resolution:**
+
+For MCP calls, Agent Shuttle defaults to the verified `read_only` task gate. A coordinator delegating an authorized edit should select `workspace_write`; no global allowlist is required. An error naming `task policy ... denied tools` comes from that gate: shell, MCP, subagents and external paths remain blocked. Run relevant test commands in the coordinator's authorized environment. If the policy probe fails, the user task was not sent; check the installed CLI's hook support and the bridge diagnostic instead of widening access.
+
+For legacy Python/A2A calls with `tool_policy=None`, native CLI settings apply:
+
 1. Check your user settings in `~/.gemini/antigravity-cli/settings.json`.
 2. Remember rule precedence: `deny` > `ask` > `allow`.
 3. If using headless mode, explicitly allow the required tools in `permissions.allow` (e.g. `read_file`, `list_dir`).
@@ -55,11 +60,11 @@ In headless mode (`-p`), the Antigravity CLI cannot prompt the user interactivel
 A task fails after 300 seconds with `TimeoutError: agy did not return a result within 300s`.
 
 **Root Cause:**  
-By default, the upstream `agy` CLI has an unbounded print timeout (`0s`), which can lead to indefinite hangs if a command stalls or network connectivity is interrupted. Agent Bridge applies an explicit 300-second deadline (`--print-timeout 300s`) and kills unresponsive child processes.
+By default, the upstream `agy` CLI has an unbounded print timeout (`0s`), which can lead to indefinite hangs if a command stalls or network connectivity is interrupted. Agent Shuttle applies an explicit 300-second deadline (`--print-timeout 300s`) and kills unresponsive child processes.
 
 **Resolution:**
 - For long-running operations, increase the timeout:
-  - CLI: `agent-bridge serve antigravity --port 8766 --agy-turn-timeout-seconds 600`
+  - CLI: `agent-shuttle serve antigravity --port 8766 --agy-turn-timeout-seconds 600`
   - Python: `HarnessLaunch(name="antigravity", url="...", workspace=..., agy_turn_timeout_seconds=600)`
 - Persistent stream sessions have an independent 30-minute turn deadline.
 
@@ -74,7 +79,7 @@ Diagnostic logs show preflight retry warnings: `eligibility check failed ... tls
 During authentication initialization, `agy` occasionally experiences temporary TLS handshake timeouts when fetching user profile metadata before the agent turn begins.
 
 **Resolution:**  
-Agent Bridge detects this specific retryable error pattern and automatically retries the invocation up to 3 times with exponential backoff before reporting a failure. If failures persist, verify your internet connection and run `agy` interactively to refresh its sign-in if needed.
+Agent Shuttle detects this specific retryable error pattern and automatically retries the invocation up to 3 times with exponential backoff before reporting a failure. If failures persist, verify your internet connection and run `agy` interactively to refresh its sign-in if needed.
 
 ---
 
@@ -87,7 +92,7 @@ Simultaneous calls to `/bridge/info` or `/bridge/capabilities` hang or fail.
 Upstream `agy` uses shared local session locks. Running multiple concurrent CLI commands (`models`, `/model`, `/effort`, `/usage`) simultaneously can cause CLI lock contention.
 
 **Resolution:**  
-Agent Bridge serializes all Antigravity metadata queries under an internal `asyncio.Lock` with a 45-second per-command timeout. Do not bypass Bridge to invoke multiple headless CLI processes concurrently in the same workspace.
+Agent Shuttle serializes all Antigravity metadata queries under an internal `asyncio.Lock` with a 45-second per-command timeout. Do not bypass Bridge to invoke multiple headless CLI processes concurrently in the same workspace.
 
 ---
 
@@ -102,7 +107,7 @@ Agent Bridge serializes all Antigravity metadata queries under an internal `asyn
 On Windows, npm installs `.cmd` batch wrappers. Batch wrappers cannot receive clean process termination signals and fail process tree tracking.
 
 **Resolution:**  
-Agent Bridge automatically checks whether the command resolves to `.cmd` and attempts to locate the real binary at `<npm_prefix>\node_modules\opencode-ai\bin\opencode.exe`. If you encounter this error, specify `runtime_command` in your profile JSON pointing directly to `opencode.exe`.
+Agent Shuttle automatically checks whether the command resolves to `.cmd` and attempts to locate the real binary at `<npm_prefix>\node_modules\opencode-ai\bin\opencode.exe`. If you encounter this error, specify `runtime_command` in your profile JSON pointing directly to `opencode.exe`.
 
 ### 2. OpenCode Daemon Startup Timeout
 
@@ -122,7 +127,7 @@ Inspect the daemon stderr output printed in the exception. Ensure the workspace 
 ### 1. Credential Redaction in Stderr
 
 **Behavior:**  
-If a Claude Code turn fails, Agent Bridge inspects the process stderr and replaces detected tokens (such as `ANTHROPIC_AUTH_TOKEN` or `credential_env`) with `[REDACTED]` before raising `RuntimeError`.
+If a Claude Code turn fails, Agent Shuttle inspects the process stderr and replaces detected tokens (such as `ANTHROPIC_AUTH_TOKEN` or `credential_env`) with `[REDACTED]` before raising `RuntimeError`.
 
 ### 2. Ollama Compatibility
 
@@ -133,7 +138,7 @@ Claude Code fails to connect to local Ollama.
 Ensure that your profile specifies:
 - `"provider": "ollama"`
 - `"endpoint": "http://127.0.0.1:11434"`
-Agent Bridge sets `ANTHROPIC_BASE_URL` to the loopback URL and `ANTHROPIC_AUTH_TOKEN="ollama"`. Remote non-loopback endpoints for Ollama are rejected for security reasons.
+Agent Shuttle sets `ANTHROPIC_BASE_URL` to the loopback URL and `ANTHROPIC_AUTH_TOKEN="ollama"`. Remote non-loopback endpoints for Ollama are rejected for security reasons.
 
 ---
 
@@ -145,7 +150,7 @@ Agent Bridge sets `ANTHROPIC_BASE_URL` to the loopback URL and `ANTHROPIC_AUTH_T
 Codex fails to authenticate or find local configuration in non-interactive shells.
 
 **Resolution:**  
-Agent Bridge automatically checks and defaults `CODEX_HOME` to `~/.codex` if not set. If your configuration resides in a custom directory, set `$env:CODEX_HOME = 'C:\path\to\.codex'`.
+Agent Shuttle automatically checks and defaults `CODEX_HOME` to `~/.codex` if not set. If your configuration resides in a custom directory, set `$env:CODEX_HOME = 'C:\path\to\.codex'`.
 
 ### 2. `no_tools` Policy Rejection
 
@@ -162,10 +167,6 @@ Codex App Server requires an active sandbox environment (`read_only`, `workspace
 On Windows, child processes spawned by venvs or shell wrappers may remain orphaned if an application crashes.
 
 - **Automated Process Cleanup:**  
-  When using `connect_harness`, Agent Bridge terminates the entire process tree using `taskkill /PID <pid> /T /F` on Windows before removing temporary directories.
-- **Manual Cleanup via Script:**  
-  ```powershell
-  & .\Stop-Bridge.ps1
-  ```
-- **Clearing Stale PID Files:**  
-  If a server was killed outside PowerShell, delete orphaned `.pid` files in the `.runtime/` folder.
+  When using `connect_harness`, Agent Shuttle terminates the entire process tree using `taskkill /PID <pid> /T /F` on Windows before removing temporary directories.
+- **Persistent Servers:**
+  Stop a foreground `agent-shuttle serve` process with Ctrl+C. If it was launched by another process manager, stop it through that manager after confirming its identity.

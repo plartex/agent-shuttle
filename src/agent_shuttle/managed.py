@@ -31,7 +31,7 @@ _BACKENDS = {
 def _trace(stage: str) -> None:
     if os.environ.get("BRIDGE_DEBUG") == "1":
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        print(f"[agent-bridge] {stamp} managed: {stage}", file=sys.stderr, flush=True)
+        print(f"[agent-shuttle] {stamp} managed: {stage}", file=sys.stderr, flush=True)
 
 
 async def _stop_process_tree(process: subprocess.Popen) -> None:
@@ -77,6 +77,7 @@ class HarnessLaunch:
     tool_policy: str | None = None
     agy_dangerously_skip_permissions: bool = False
     agy_turn_timeout_seconds: float = 300
+    task_db: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -86,10 +87,14 @@ class BridgeConnection:
     log_path: Path | None = None
 
 
+class HarnessConfigurationMismatch(ValueError):
+    """A live peer cannot serve the requested workspace or access policy."""
+
+
 def _verify_backend(name: str, url: str, info: dict) -> None:
     backend = info.get("backend")
     if backend not in _BACKENDS[name]:
-        raise ValueError(f"{url} serves backend {backend!r}, not {name!r}")
+        raise HarnessConfigurationMismatch(f"{url} serves backend {backend!r}, not {name!r}")
 
 
 def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
@@ -97,24 +102,32 @@ def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
     expected = launch.workspace.resolve(strict=True)
     reported = info.get("workspace")
     if not isinstance(reported, str) or not Path(reported).is_absolute():
-        raise ValueError(f"{launch.url} did not report a valid workspace")
+        raise HarnessConfigurationMismatch(f"{launch.url} did not report a valid workspace")
     try:
         actual = Path(reported).resolve(strict=True)
     except OSError as exc:
-        raise ValueError(f"{launch.url} reported an inaccessible workspace") from exc
+        raise HarnessConfigurationMismatch(f"{launch.url} reported an inaccessible workspace") from exc
     if os.path.normcase(str(actual)) != os.path.normcase(str(expected)):
-        raise ValueError(f"{launch.url} workspace {actual} does not match {expected}")
+        raise HarnessConfigurationMismatch(f"{launch.url} workspace {actual} does not match {expected}")
+    if launch.task_db is not None:
+        reported_db = info.get("task_db_path")
+        if (info.get("task_storage") != "sqlite" or not isinstance(reported_db, str)
+                or os.path.normcase(str(Path(reported_db).resolve())) != os.path.normcase(str(launch.task_db.resolve()))):
+            raise HarnessConfigurationMismatch(f"{launch.url} does not use the requested persistent task database")
     if launch.tool_policy == "read_only" and info.get("read_only_tools") is not True:
-        raise ValueError(f"{launch.url} cannot confirm read-only tools")
+        raise HarnessConfigurationMismatch(f"{launch.url} cannot confirm read-only tools")
+    policies = info.get("supported_tool_policies")
+    if launch.tool_policy is not None and isinstance(policies, list) and launch.tool_policy not in policies:
+        raise HarnessConfigurationMismatch(f"{launch.url} cannot enforce {launch.tool_policy}")
     if launch.name == "antigravity":
         expected_mode = (
             "all" if launch.tool_policy == "full_access" or launch.agy_dangerously_skip_permissions
             else "settings"
         )
         if info.get("agy_permission_mode") != expected_mode:
-            raise ValueError(f"{launch.url} Antigravity permission mode does not match {expected_mode!r}")
+            raise HarnessConfigurationMismatch(f"{launch.url} Antigravity permission mode does not match {expected_mode!r}")
         if info.get("agy_turn_timeout_seconds") != launch.agy_turn_timeout_seconds:
-            raise ValueError(f"{launch.url} Antigravity turn timeout does not match")
+            raise HarnessConfigurationMismatch(f"{launch.url} Antigravity turn timeout does not match")
 
 
 def _local_port(url: str) -> int:
@@ -150,8 +163,6 @@ async def connect_harness(
                 or isinstance(launch.agy_turn_timeout_seconds, bool)
                 or not 0 < launch.agy_turn_timeout_seconds < float("inf")):
             raise ValueError("agy_turn_timeout_seconds must be positive and finite")
-    if launch.name == "antigravity" and launch.tool_policy not in {None, "full_access"}:
-        raise ValueError(f"Antigravity CLI cannot enforce {launch.tool_policy}")
     client = client or BridgeClient()
     identify = getattr(client, "identity", None) or client.capabilities
     _trace("checking existing server")
@@ -183,7 +194,7 @@ async def connect_harness(
     if command is None and profile_path is None:
         raise RuntimeError(f"{launch.name} is not installed; provide command or a running Bridge URL")
 
-    with tempfile.TemporaryDirectory(prefix="agent-bridge-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="agent-shuttle-") as temporary:
         if launch.name in {"opencode", "claude_code"} and profile_path is None:
             if not launch.model:
                 raise ValueError("model is required for a temporary Ollama profile")
@@ -197,11 +208,13 @@ async def connect_harness(
             if launch.name == "opencode":
                 profile["reasoning_efforts"] = ["none"]
             profile_path.write_text(json.dumps(profile), encoding="utf-8")
-        argv = [sys.executable, "-m", "agent_bridge.cli", "serve",
+        argv = [sys.executable, "-m", "agent_shuttle.cli", "serve",
                 "profile" if profile_path else launch.name,
                 "--port", str(port), "--workspace", str(workspace)]
         if profile_path:
             argv.extend(["--profile", str(profile_path)])
+        if launch.task_db is not None:
+            argv.extend(["--task-db", str(launch.task_db)])
         if launch.name == "antigravity":
             argv.extend(["--agy-command", command])
             argv.extend(["--agy-turn-timeout-seconds", f"{launch.agy_turn_timeout_seconds:g}"])
@@ -218,7 +231,10 @@ async def connect_harness(
             _trace(f"temporary server pid={process.pid}")
             try:
                 last_error: Exception | None = None
-                for _ in range(60):
+                # Antigravity checks its signed-in model catalog before listening;
+                # that check may take up to 45 seconds on a healthy account.
+                attempts = 120 if launch.name == "antigravity" else 60
+                for _ in range(attempts):
                     if process.poll() is not None:
                         raise RuntimeError(
                             f"{launch.name} Bridge exited ({process.returncode}); "
