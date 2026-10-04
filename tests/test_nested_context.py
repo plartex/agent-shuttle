@@ -122,7 +122,7 @@ class NestedLibraryTests(unittest.IsolatedAsyncioTestCase):
         database = self.root / "custom.sqlite3"
         manager = TaskManager({"fake": self.backend}, workspace=self.root,
                               database=database, runtime_context="worker")
-        self.assertEqual(manager.database, self.root / "nested" / database.name)
+        self.assertEqual(manager.database, (self.root / "nested" / database.name).resolve())
         self.assertFalse(database.exists())
 
     async def test_coordinator_still_dispatches(self):
@@ -268,7 +268,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
             with patch.dict(os.environ, {WORKER_CONTEXT_ENV: "worker"}):
                 store = SQLiteTaskStore(parent_database)
             try:
-                self.assertEqual(store.path, Path(folder) / "nested" / parent_database.name)
+                self.assertEqual(store.path, (Path(folder) / "nested" / parent_database.name).resolve())
                 self.assertFalse(parent_database.exists())
             finally:
                 store.close()
