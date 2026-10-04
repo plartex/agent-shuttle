@@ -194,7 +194,7 @@ async def connect_harness(
     if command is None and profile_path is None:
         raise RuntimeError(f"{launch.name} is not installed; provide command or a running Bridge URL")
 
-    with tempfile.TemporaryDirectory(prefix="agent-bridge-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="agent-shuttle-") as temporary:
         if launch.name in {"opencode", "claude_code"} and profile_path is None:
             if not launch.model:
                 raise ValueError("model is required for a temporary Ollama profile")
@@ -208,7 +208,7 @@ async def connect_harness(
             if launch.name == "opencode":
                 profile["reasoning_efforts"] = ["none"]
             profile_path.write_text(json.dumps(profile), encoding="utf-8")
-        argv = [sys.executable, "-m", "agent_bridge.cli", "serve",
+        argv = [sys.executable, "-m", "agent_shuttle.cli", "serve",
                 "profile" if profile_path else launch.name,
                 "--port", str(port), "--workspace", str(workspace)]
         if profile_path:
@@ -231,7 +231,10 @@ async def connect_harness(
             _trace(f"temporary server pid={process.pid}")
             try:
                 last_error: Exception | None = None
-                for _ in range(60):
+                # Antigravity checks its signed-in model catalog before listening;
+                # that check may take up to 45 seconds on a healthy account.
+                attempts = 120 if launch.name == "antigravity" else 60
+                for _ in range(attempts):
                     if process.poll() is not None:
                         raise RuntimeError(
                             f"{launch.name} Bridge exited ({process.returncode}); "

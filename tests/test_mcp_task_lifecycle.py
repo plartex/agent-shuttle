@@ -11,9 +11,9 @@ import uvicorn
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from agent_bridge.a2a_server import make_app
-from agent_bridge.backends import AntigravityCliBackend
-from agent_bridge.task_store import SQLiteTaskStore
+from agent_shuttle.a2a_server import make_app
+from agent_shuttle.backends import AntigravityCliBackend
+from agent_shuttle.task_store import SQLiteTaskStore
 from tests.test_task_lifecycle import SlowBackend
 
 
@@ -44,7 +44,7 @@ class McpTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
             env = {**os.environ, "BRIDGE_WORKSPACE": folder,
                    "BRIDGE_ANTIGRAVITY_URL": url, "BRIDGE_AGENTS_JSON": "{}",
                    "BRIDGE_TASK_REGISTRY": str(Path(folder) / "tickets.json")}
-            params = StdioServerParameters(command=sys.executable, args=["-m", "agent_bridge.mcp_server"], env=env)
+            params = StdioServerParameters(command=sys.executable, args=["-m", "agent_shuttle.mcp_server"], env=env)
             try:
                 async with stdio_client(params) as (reader, writer):
                     async with ClientSession(reader, writer) as client:

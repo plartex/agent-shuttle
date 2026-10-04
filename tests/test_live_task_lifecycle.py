@@ -28,7 +28,7 @@ class LiveTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
                    if key not in {"BRIDGE_CODEX_URL", "BRIDGE_ANTIGRAVITY_URL", "BRIDGE_AGENTS_JSON"}}
             env.update(BRIDGE_WORKSPACE=str(root), BRIDGE_TASK_REGISTRY=str(root / "tickets.json"),
                        BRIDGE_AGY_COMMAND=str(repository / "bin" / "agy.exe"))
-            params = StdioServerParameters(command=sys.executable, args=["-m", "agent_bridge.mcp_server"], env=env)
+            params = StdioServerParameters(command=sys.executable, args=["-m", "agent_shuttle.mcp_server"], env=env)
             recorded = []
             ticket = None
             async with asyncio.timeout(360):

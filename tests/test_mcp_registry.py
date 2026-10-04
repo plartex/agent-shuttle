@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from agent_bridge.mcp_server import (
+from agent_shuttle.mcp_server import (
     _agent_launch, ask_agent, ask_antigravity, ask_codex,
     get_agent_info, get_antigravity_info, get_codex_info,
 )
@@ -26,10 +26,10 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
         result = SimpleNamespace(task_id="1", context_id="c", state="done", text="ok",
                                  usage={"input_tokens": 3}, details={"source": "test"})
         with patch.dict(os.environ, {"BRIDGE_WORKSPACE": str(Path.cwd())}, clear=True), \
-             patch("agent_bridge.mcp_server.connect_harness", connected), \
-             patch("agent_bridge.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.connect_harness", connected), \
+             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
                    return_value=result) as ask, \
-             patch("agent_bridge.mcp_server.BridgeClient.info", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.BridgeClient.info", new_callable=AsyncMock,
                    return_value={"ok": True}) as info:
             self.assertEqual((await ask_agent("codex", "task"))["text"], "ok")
             self.assertEqual((await ask_codex("task"))["details"], {"source": "test"})
@@ -56,8 +56,8 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
         result = SimpleNamespace(task_id="1", context_id=None, state="done", text="ok",
                                  usage=None, details=None)
         with patch.dict(os.environ, {}, clear=True), \
-             patch("agent_bridge.mcp_server.connect_harness", connected), \
-             patch("agent_bridge.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.connect_harness", connected), \
+             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
                    return_value=result):
             answer = await ask_antigravity("task", workspace=str(Path.cwd()),
                                            tool_policy="full_access", turn_timeout_seconds=45)
@@ -100,13 +100,13 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
         result = SimpleNamespace(task_id="1", context_id=None, state="TASK_STATE_COMPLETED",
                                  text="OK", usage=None, details=None)
         with patch.dict(os.environ, {"BRIDGE_CODEX_URL": "http://127.0.0.1:8765"}, clear=True), \
-             patch("agent_bridge.mcp_server.connect_harness", connected), \
-             patch("agent_bridge.mcp_server._free_local_url",
+             patch("agent_shuttle.mcp_server.connect_harness", connected), \
+             patch("agent_shuttle.mcp_server._free_local_url",
                    return_value="http://127.0.0.1:49152"), \
-             patch("agent_bridge.mcp_server.BridgeClient.capabilities", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.BridgeClient.capabilities", new_callable=AsyncMock,
                    return_value={"read_only_tools": True,
                                  "capabilities": {"models": [{"id": "gpt-6-astra"}]}}), \
-             patch("agent_bridge.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
                    return_value=result) as ask:
             answer = await ask_codex("hello", model="gpt-6-sol")
 
@@ -121,9 +121,9 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
                                  usage=None, details=None)
         with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON":
                                   '{"local":"http://127.0.0.1:8767"}'}, clear=True), \
-             patch("agent_bridge.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
                    return_value=result) as ask, \
-             patch("agent_bridge.mcp_server.BridgeClient.info", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.BridgeClient.info", new_callable=AsyncMock,
                    return_value={"agent": "local"}) as info:
             self.assertEqual((await ask_agent("local", "hello"))["text"], "ok")
             self.assertEqual(await get_agent_info("local"), {"agent": "local"})

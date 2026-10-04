@@ -16,6 +16,7 @@ import httpx
 
 from .backends import BackendResponse
 from .profiles import AgentProfile, ProfileSelection, ToolPolicy
+from .runtime_context import worker_env
 
 
 _READ_TOOLS = {"read", "glob", "grep", "lsp"}
@@ -103,7 +104,7 @@ def _child_env(profile: AgentProfile, policy: ToolPolicy, password: str) -> dict
         if profile.credential_env not in os.environ:
             raise RuntimeError(f"Missing credential environment variable {profile.credential_env}")
         env[profile.credential_env] = os.environ[profile.credential_env]
-    return env
+    return worker_env(env)
 
 
 def _usage(info: dict) -> tuple[dict[str, int], dict]:

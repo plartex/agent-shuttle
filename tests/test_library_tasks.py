@@ -7,8 +7,8 @@ import unittest
 import uuid
 from pathlib import Path
 
-from agent_bridge.backends import BackendResponse
-from agent_bridge.task_library import TaskManager
+from agent_shuttle.backends import BackendResponse
+from agent_shuttle.task_library import TaskManager
 
 
 class FakeSession:
@@ -167,8 +167,9 @@ class LibraryTasksTests(unittest.IsolatedAsyncioTestCase):
         async with self.manager() as manager:
             session = await manager.create_session("fake")
             await (await session.dispatch("hello")).result()
-            manager._db().execute("UPDATE sessions SET updated_at=0 WHERE id=?", (session.id,))
-            manager._db().commit()
+            with contextlib.closing(sqlite3.connect(self.database)) as connection:
+                connection.execute("UPDATE sessions SET updated_at=0 WHERE id=?", (session.id,))
+                connection.commit()
             self.assertEqual(await manager.reap_idle_sessions(1), [session.id])
             self.assertTrue(self.backend.sessions[0].closed)
 

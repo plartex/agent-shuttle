@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_bridge.claude_runtime import ClaudeCodeRuntime
-from agent_bridge.claude_runtime import _environment, _usage
-from agent_bridge.profiles import AgentProfile
+from agent_shuttle.claude_runtime import ClaudeCodeRuntime
+from agent_shuttle.claude_runtime import _environment, _usage
+from agent_shuttle.profiles import AgentProfile
 
 
 class FakeProcess:
@@ -64,7 +64,7 @@ class ClaudeCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
                                 "cache_read_input_tokens": 0}}
             return FakeProcess(json.dumps(result).encode())
 
-        with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec", side_effect=spawn):
+        with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec", side_effect=spawn):
             session = await self.runtime.open_session(self.profile.resolve(None, None, "no_tools"))
             self.session_id = session.session_id
             first = await session.ask("a" * 40000)
@@ -88,7 +88,7 @@ class ClaudeCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.args = args
             return FakeProcess(json.dumps(result).encode())
 
-        with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec", side_effect=spawn):
+        with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec", side_effect=spawn):
             session = await self.runtime.open_session(self.profile.resolve(None, None, "read_only"))
             self.session_id = session.session_id
             await session.ask("read")
@@ -96,12 +96,12 @@ class ClaudeCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.args[self.args.index("--tools") + 1], "Read,Glob,Grep")
 
     async def test_nonzero_and_invalid_json_fail_with_bounded_diagnostics(self):
-        with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec", return_value=FakeProcess(b"", 1, b"bad endpoint")):
+        with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec", return_value=FakeProcess(b"", 1, b"bad endpoint")):
             session = await self.runtime.open_session(self.profile.resolve(None, None, None))
             with self.assertRaisesRegex(RuntimeError, "bad endpoint"):
                 await session.ask("hello")
             await session.close()
-        with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec", return_value=FakeProcess(b"not json")):
+        with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec", return_value=FakeProcess(b"not json")):
             session = await self.runtime.open_session(self.profile.resolve(None, None, None))
             with self.assertRaisesRegex(RuntimeError, "invalid JSON"):
                 await session.ask("hello")
@@ -119,7 +119,7 @@ class ClaudeCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 session = await self.runtime.open_session(self.profile.resolve(None, None, None))
                 result = {key: (session.session_id if value == "SELF" else value)
                           for key, value in result.items()}
-                with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec",
+                with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec",
                            return_value=FakeProcess(json.dumps(result).encode())):
                     with self.assertRaisesRegex(RuntimeError, message):
                         await session.ask("hello")
@@ -139,7 +139,7 @@ class ClaudeCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             raise asyncio.TimeoutError
         process.communicate = timeout
         session = await self.runtime.open_session(self.profile.resolve(None, None, None))
-        with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec", return_value=process):
+        with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec", return_value=process):
             with self.assertRaises(asyncio.TimeoutError):
                 await session.ask("task")
         self.assertTrue(process.killed)
@@ -148,10 +148,10 @@ class ClaudeCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await session.ask("task")
 
     async def test_discover_and_version_failure(self):
-        with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec",
                    return_value=FakeProcess(b"2.1.259\n")):
             self.assertEqual((await self.runtime.discover())["version"], "2.1.259")
-        with patch("agent_bridge.claude_runtime.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.claude_runtime.asyncio.create_subprocess_exec",
                    return_value=FakeProcess(b"", 1, b"bad binary")):
             with self.assertRaisesRegex(RuntimeError, "bad binary"):
                 await self.runtime.discover()

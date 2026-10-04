@@ -15,7 +15,7 @@ workspace: C:/путь/к/agent-bridge
 
 Ожидается `TASK_STATE_COMPLETED` и ответ `agent-shuttle 0.5.0` (для текущей версии исходников). MCP сам запустит временный локальный A2A-сервер, если подходящий сервер не работает, и завершит его после ответа. Если сервер уже работает, MCP сверит харнесс и рабочий каталог и повторно использует его.
 
-У Antigravity Desktop активная пользовательская конфигурация может находиться в `%USERPROFILE%/.gemini/config/mcp_config.json`, даже если в проекте есть `.agents/mcp_config.json`. Если ошибка сохраняется после перезапуска, проверьте глобальный файл и путь `mcpServers.agent-bridge.command`: он должен вести в `agent-bridge/.venv/Scripts/python.exe` с `openai-codex>=0.155.1`. В проверенном случае Antigravity продолжал запускать старое корневое окружение именно из глобального файла. Имя сервера `agent-bridge` и модуль `agent_bridge.mcp_server` совместимы с Agent Shuttle. Передайте `workspace` явно, если в конфигурации нет `BRIDGE_WORKSPACE`.
+У Antigravity Desktop активная пользовательская конфигурация может находиться в `%USERPROFILE%/.gemini/config/mcp_config.json`, даже если в проекте есть `.agents/mcp_config.json`. Если ошибка сохраняется после перезапуска, проверьте глобальный файл: его `mcpServers.agent-shuttle.command` должен вести в окружение Agent Shuttle с `openai-codex>=0.155.1`, а аргументы должны запускать `agent_shuttle.mcp_server`. Локальные `.agents/mcp_config.json` и `.codex/config.toml` уже обновлены. Передайте `workspace` явно, если в конфигурации нет `BRIDGE_WORKSPACE`.
 
 ## 2. Жизненный цикл задач
 

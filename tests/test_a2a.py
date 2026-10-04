@@ -14,13 +14,13 @@ from a2a.client import ClientConfig, create_client
 from a2a.helpers import new_text_message
 from a2a.types import Role, SendMessageRequest, TaskState
 
-from agent_bridge.a2a_server import make_app
-from agent_bridge.backends import (
+from agent_shuttle.a2a_server import make_app
+from agent_shuttle.backends import (
     AntigravityCliBackend, AntigravityPermissionDenied, BackendResponse, CodexBackend,
 )
-from agent_bridge.client import BridgeClient
-from agent_bridge.profiled import ProfiledBackend
-from agent_bridge.profiles import AgentProfile
+from agent_shuttle.client import BridgeClient
+from agent_shuttle.profiled import ProfiledBackend
+from agent_shuttle.profiles import AgentProfile
 
 
 class EchoBackend:

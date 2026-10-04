@@ -33,3 +33,6 @@ __all__ = [
     "SessionInfo",
     "AgentInfo",
 ]
+
+ShuttleClient = BridgeClient
+__all__ = [*__all__, 'ShuttleClient']

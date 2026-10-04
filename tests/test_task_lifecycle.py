@@ -2,14 +2,18 @@
 
 import asyncio
 import socket
+import tempfile
 import unittest
 import uuid
+from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import uvicorn
 
-from agent_bridge.a2a_server import make_app
-from agent_bridge.client import BridgeClient
+from agent_shuttle.a2a_server import make_app
+from agent_shuttle.client import BridgeClient
+from a2a.server.agent_execution.active_task_registry import ActiveTaskRegistry
 
 
 class SlowBackend:
@@ -52,11 +56,14 @@ class SlowSession:
 
 class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         self.url = f"http://127.0.0.1:{port}"
         self.backend = SlowBackend()
+        self.backend.workspace = Path(self.temporary.name)
         self.app = make_app("slow", self.backend, self.url)
         self.server = uvicorn.Server(uvicorn.Config(
             self.app,
@@ -188,13 +195,31 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.server.should_exit = True
         await self.running
         port = int(self.url.rsplit(":", 1)[1])
+        self.app = make_app("slow", self.backend, self.url, **options)
         self.server = uvicorn.Server(uvicorn.Config(
-            make_app("slow", self.backend, self.url, **options),
+            self.app,
             host="127.0.0.1", port=port, log_level="error",
         ))
         self.running = asyncio.create_task(self.server.serve())
         while not self.server.started:
             await asyncio.sleep(0.01)
+
+    async def test_server_drains_a2a_producers_before_closing_library_repository(self):
+        await BridgeClient(timeout_seconds=3).submit(self.url, "unfinished")
+        await asyncio.wait_for(self.backend.started.wait(), 2)
+        manager = self.app.state.task_manager
+        observed = []
+        original_close = ActiveTaskRegistry.aclose
+
+        async def observe_close(registry):
+            observed.append(manager.repository._conn is not None)
+            await original_close(registry)
+
+        with patch.object(ActiveTaskRegistry, "aclose", observe_close):
+            self.server.should_exit = True
+            await asyncio.wait_for(self.running, 10)
+        self.assertEqual(observed, [True])
+        self.assertTrue(self.backend.cancelled.is_set())
 
     async def test_silent_worker_has_distinct_stalled_error_and_is_cancelled(self):
         await self._reconfigure(execution_timeout_seconds=2, stall_timeout_seconds=0.1)

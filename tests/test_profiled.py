@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_bridge.profiled import ProfiledBackend, ProfiledInfo
-from agent_bridge.profiles import AgentProfile, ToolPolicy
+from agent_shuttle.profiled import ProfiledBackend, ProfiledInfo
+from agent_shuttle.profiles import AgentProfile, ToolPolicy
 
 
 class FakeSession:

@@ -41,7 +41,7 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
             candidates = {
                 "antigravity": [home / ".local" / "bin" / "agy.exe",
                                 Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe",
-                                Path(__file__).resolve().parent.parent / "bin" / "agy.exe"],
+                                Path(__file__).resolve().parents[2] / "bin" / "agy.exe"],
                 "opencode": [Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" /
                              "opencode-ai" / "bin" / "opencode.exe",
                              home / ".local" / "bin" / "opencode.exe"],

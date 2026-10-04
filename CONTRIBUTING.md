@@ -84,4 +84,4 @@ When updating or adding documentation:
 3. **Relative Link Integrity:**  
    Check that all relative Markdown links resolve correctly.
 4. **Code Verification:**  
-   Verify that all CLI commands, parameter names, function signatures, and JSON schemas in documentation match the current implementation in `agent_bridge/`.
+   Verify that all CLI commands, parameter names, function signatures, and JSON schemas in documentation match the current implementation in `src/agent_shuttle/`.

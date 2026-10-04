@@ -4,8 +4,8 @@ import os
 import unittest
 from pathlib import Path
 
-from agent_bridge.profiles import AgentProfile
-from agent_bridge.registry import build_profile
+from agent_shuttle.profiles import AgentProfile
+from agent_shuttle.registry import build_profile
 
 
 @unittest.skipUnless(os.environ.get("BRIDGE_LIVE_OLLAMA_MODEL"), "local Ollama model not configured")

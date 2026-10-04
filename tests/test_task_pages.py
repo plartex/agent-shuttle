@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from a2a.helpers import new_text_message, new_text_part
 from a2a.types import Task, TaskStatus, TaskState, Artifact
 
-from agent_bridge.client import BridgeClient, _task_result
+from agent_shuttle.client import BridgeClient, _task_result
 
 
 class TaskPagesTests(unittest.IsolatedAsyncioTestCase):

@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from agent_bridge import mcp_server
+from agent_shuttle import mcp_server
 
 
 class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
@@ -46,7 +46,7 @@ class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
                                  "workspace_write")
 
     async def test_stale_peer_policy_does_not_require_a_manual_restart(self):
-        from agent_bridge.managed import HarnessConfigurationMismatch
+        from agent_shuttle.managed import HarnessConfigurationMismatch
 
         with tempfile.TemporaryDirectory() as folder:
             launches = []

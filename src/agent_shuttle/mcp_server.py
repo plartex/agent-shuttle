@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 from .client import BridgeClient
 from .managed import HarnessConfigurationMismatch, HarnessLaunch, connect_harness
 from .mcp_tasks import TaskGateway
+from .runtime_context import is_worker_context, nested_data_path, require_coordinator
 
 
 _task_gateway: TaskGateway | None = None
@@ -29,6 +30,8 @@ def _gateway() -> TaskGateway:
     if _task_gateway is None:
         root = Path(os.environ.get("BRIDGE_WORKSPACE") or os.getcwd())
         registry = Path(os.environ.get("BRIDGE_TASK_REGISTRY") or root / ".agent-shuttle" / "mcp-tasks.json")
+        if is_worker_context():
+            registry = nested_data_path(registry)
         _task_gateway = TaskGateway(registry)
     return _task_gateway
 
@@ -65,6 +68,7 @@ mcp = FastMCP(
         "Use ask_agent for Codex, Antigravity, OpenCode, Claude Code, or configured profiles. "
         "For long tasks use submit_task, then check_task/wait_task; obtain paged output with "
         "get_result/get_transcript. A wait timeout does not cancel execution; cancel_task does. "
+        "A Bridge inherited inside a worker rejects new tasks and task cancellation. "
         "The legacy ask_antigravity and ask_codex tools remain available. "
         "Use get_antigravity_info or get_codex_info to check current models, efforts and account quotas. "
         "Each call starts a new remote task. Omit model unless the user explicitly names "
@@ -201,6 +205,7 @@ async def ask_agent(
     workspace: str | None = None,
 ) -> dict:
     """Delegate; choose read_only for inspection or workspace_write for requested edits."""
+    require_coordinator()
     legacy_url = _legacy_custom_url(agent_id)
     if legacy_url:
         result = await BridgeClient().ask(
@@ -240,6 +245,7 @@ async def ask_antigravity(
     Scoped policies enforce native file tools and block shell/MCP/subagents.
     Servers and per-conversation permission hooks are managed automatically.
     """
+    require_coordinator()
     launch = _agent_launch("antigravity", workspace, model, tool_policy, turn_timeout_seconds)
     return await _managed_ask(launch, prompt, model, reasoning_effort, tool_policy)
 
@@ -253,6 +259,7 @@ async def ask_codex(
     tool_policy: str | None = None,
 ) -> dict:
     """Delegate to Codex, launching its A2A server when absent. Omit model unless requested."""
+    require_coordinator()
     launch = _agent_launch("codex", workspace, model, tool_policy)
     return await _managed_ask(launch, prompt, model, reasoning_effort, tool_policy)
 
@@ -266,6 +273,7 @@ async def submit_task(agent_id: str, prompt: str, model: str | None = None,
     The managed peer remains alive between calls. Reuse request_id for submission retries.
     Task records are stored in the workspace's .agent-shuttle directory.
     """
+    require_coordinator()
     launch = _agent_launch(agent_id, workspace, model, tool_policy)
     return await _gateway().submit(launch, prompt, model, reasoning_effort, request_id)
 
@@ -285,6 +293,7 @@ async def wait_task(task_id: str, timeout_seconds: float = 180) -> dict:
 @mcp.tool()
 async def cancel_task(task_id: str) -> dict:
     """Stop the delegated task and wait for backend cleanup; repeated cancellation is safe."""
+    require_coordinator()
     return asdict(await (await _gateway().handle(task_id)).cancel())
 
 

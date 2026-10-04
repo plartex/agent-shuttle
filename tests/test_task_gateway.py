@@ -5,9 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from agent_bridge.client import BridgeClient, BridgeResult, TaskHandle
-from agent_bridge.managed import HarnessLaunch
-from agent_bridge.mcp_tasks import TaskGateway
+from agent_shuttle.client import BridgeClient, BridgeResult, TaskHandle
+from agent_shuttle.managed import HarnessLaunch
+from agent_shuttle.mcp_tasks import TaskGateway
 
 
 class GatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -28,7 +28,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             client.cancel_task = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_CANCELED", ""))
             gateway = TaskGateway(Path(folder) / "registry.json", client=client)
             launch = HarnessLaunch("antigravity", "http://127.0.0.1:1234", Path(folder), tool_policy="read_only")
-            with patch("agent_bridge.mcp_tasks.connect_harness", connect):
+            with patch("agent_shuttle.mcp_tasks.connect_harness", connect):
                 ticket = await gateway.submit(launch, "review", "gemini-3.8-flash-high", "high", None)
                 self.assertEqual(ticket["task_id"], "job")
                 self.assertFalse(closed)
@@ -48,7 +48,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             client.task_status = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_COMPLETED", "done"))
             path = Path(folder) / "registry.json"
             launch = HarnessLaunch("antigravity", "http://127.0.0.1:1234", Path(folder), tool_policy="read_only")
-            with patch("agent_bridge.mcp_tasks.connect_harness", connect):
+            with patch("agent_shuttle.mcp_tasks.connect_harness", connect):
                 first = TaskGateway(path, client=client)
                 await first.submit(launch, "review", None, None, None)
                 await first.close()

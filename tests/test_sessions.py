@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from agent_bridge.a2a_server import SessionManager
+from agent_shuttle.a2a_server import SessionManager
 
 
 class Session:

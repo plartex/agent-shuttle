@@ -10,7 +10,7 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
     async def test_remote_agent_tools_are_listed(self):
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "agent_bridge.mcp_server"],
+            args=["-m", "agent_shuttle.mcp_server"],
             env={
                 **os.environ,
                 "BRIDGE_CODEX_URL": "http://127.0.0.1:8765",

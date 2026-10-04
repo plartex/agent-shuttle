@@ -14,10 +14,20 @@ from pathlib import Path
 from typing import Protocol
 
 from .agy_policy import SCOPED_POLICIES, ScopedAgyPolicy
+from .runtime_context import worker_env
+from .structured import encode_output_schema, validate_output
 
 
 class AntigravityPermissionDenied(RuntimeError):
     """The CLI completed a turn without permission for a requested tool."""
+
+    session_reusable = True
+
+
+class StructuredOutputError(ValueError):
+    """A completed native turn failed its schema; its conversation is still usable."""
+
+    session_reusable = True
 
 
 class AntigravityAuthenticationError(RuntimeError):
@@ -252,7 +262,7 @@ class CodexBackend:
 
         # The Windows CLI needs an explicit home in some non-interactive shells.
         codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-        config = CodexConfig(env={**os.environ, "CODEX_HOME": codex_home})
+        config = CodexConfig(env=worker_env({**os.environ, "CODEX_HOME": codex_home}))
         async with AsyncCodex(config) as codex:
             thread = await codex.thread_start(
                 cwd=str(self.workspace),
@@ -279,7 +289,7 @@ class CodexBackend:
         sandbox = _codex_sandbox(Sandbox, read_only, tool_policy)
 
         codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-        codex = AsyncCodex(CodexConfig(env={**os.environ, "CODEX_HOME": codex_home}))
+        codex = AsyncCodex(CodexConfig(env=worker_env({**os.environ, "CODEX_HOME": codex_home})))
         await codex.__aenter__()
         try:
             thread = await codex.thread_start(
@@ -309,7 +319,7 @@ class CodexBackend:
 
         sandbox = _codex_sandbox(Sandbox, read_only, tool_policy)
         codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-        codex = AsyncCodex(CodexConfig(env={**os.environ, "CODEX_HOME": codex_home}))
+        codex = AsyncCodex(CodexConfig(env=worker_env({**os.environ, "CODEX_HOME": codex_home})))
         await codex.__aenter__()
         try:
             thread = await codex.thread_resume(
@@ -385,27 +395,32 @@ class AntigravityCliBackend:
         read_only: bool = False,
         tool_policy: str | None = None,
         on_event=None,
+        output_schema: dict | None = None,
     ) -> BackendResponse:
         policy = self._tool_policy(read_only, tool_policy)
+        schema = encode_output_schema(output_schema)
         if policy in SCOPED_POLICIES:
             session = None
             try:
                 async with asyncio.timeout(self.turn_timeout_seconds):
                     session = await self.open_session(
                         model, reasoning_effort=reasoning_effort, tool_policy=policy,
+                        output_schema=output_schema, on_event=on_event,
                     )
                     result = await session.ask(prompt, on_event=on_event)
                     usage = dict(result.usage or {})
                     for key, value in (session.probe_usage or {}).items():
                         usage[key] = usage.get(key, 0) + value
                     return BackendResponse(result.text, usage or None, {
-                        **(result.details or {}), "policy_probe_usage": session.probe_usage,
+                        **(result.details or {}), "policy_probe_usage": session.probe_usage, "usage_includes_policy_probe": True,
                     })
             finally:
                 if session is not None:
                     await session.close()
         command = [self.command, "-p", prompt, "--output-format", "json",
                    "--print-timeout", f"{self.turn_timeout_seconds:g}s"]
+        if schema is not None:
+            command.extend(["--json-schema", schema])
         if self.dangerously_skip_permissions:
             command.append("--dangerously-skip-permissions")
         if model:
@@ -422,6 +437,7 @@ class AntigravityCliBackend:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 cwd=str(self.workspace),
+                env=worker_env(os.environ),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -464,6 +480,10 @@ class AntigravityCliBackend:
                     f"{stderr.decode(errors='replace')[-4000:]}"
                 )
             response = _decode_agy_result(stdout, stderr)
+            if output_schema is not None:
+                payload = json.loads(stdout)
+                value = payload["structured_output"] if "structured_output" in payload else json.loads(response)
+                response = json.dumps(validate_output(value, output_schema), ensure_ascii=False)
             details = {"preflight_retries": attempt} if attempt else None
             return BackendResponse(response, _decode_agy_usage(stdout), details)
         raise AssertionError("Antigravity retry loop exhausted unexpectedly")
@@ -475,12 +495,53 @@ class AntigravityCliBackend:
         reasoning_effort: str | None = None,
         read_only: bool = False,
         tool_policy: str | None = None,
+        output_schema: dict | None = None,
+        on_event=None,
     ) -> BackendSession:
         policy = self._tool_policy(read_only, tool_policy)
-        scoped = ScopedAgyPolicy(policy, self.workspace) if policy in SCOPED_POLICIES else None
+        return await self._open_session(model, reasoning_effort=reasoning_effort, policy=policy,
+                                        output_schema=output_schema, on_event=on_event)
+
+    async def _resume_scoped_session(
+        self, native_id: str, model: str | None = None, *,
+        reasoning_effort: str | None = None, read_only: bool = False,
+        tool_policy: str | None = None,
+        output_schema: dict | None = None,
+    ) -> BackendSession:
+        """Resume a native conversation after verifying a fresh scoped tool gate."""
+        if not isinstance(native_id, str) or not native_id.strip():
+            raise ValueError("Antigravity conversation ID must be nonempty")
+        policy = self._tool_policy(read_only, tool_policy)
+        if policy not in SCOPED_POLICIES:
+            raise ValueError("Antigravity resume requires a verified scoped tool policy")
+        return await self._open_session(
+            model, reasoning_effort=reasoning_effort, policy=policy, native_id=native_id,
+            output_schema=output_schema,
+        )
+
+    async def _open_session(
+        self, model: str | None, *, reasoning_effort: str | None,
+        policy: str | None, native_id: str | None = None,
+        output_schema: dict | None = None,
+        on_event=None,
+        _startup_attempt: int = 0,
+    ) -> BackendSession:
+        schema = encode_output_schema(output_schema)
+        scoped = ScopedAgyPolicy(policy, self.workspace, output_schema=output_schema) if policy in SCOPED_POLICIES else None
         if scoped is not None:
             scoped.__enter__()
         command = [self.command, "--input-format", "stream-json", "--output-format", "stream-json", "--print-timeout", "30m"]
+        if schema is not None:
+            schema_argument = schema
+            if scoped is not None:
+                schema_path = scoped.control / "output-schema.json"
+                schema_path.write_text(schema, encoding="utf-8")
+                schema_argument = str(schema_path)
+            command.extend(["--json-schema", schema_argument])
+        if scoped is not None:
+            command.extend(["--log-file", str(scoped.control / "cli.log")])
+        if native_id is not None:
+            command.extend(["--conversation", native_id])
         if scoped is not None:
             # Keep project hooks/plugins outside the active customization workspace.
             # The verified hook replaces CLI prompts; --skip does not bypass hooks.
@@ -497,6 +558,7 @@ class AntigravityCliBackend:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 cwd=str(scoped.control if scoped is not None else self.workspace),
+                env=worker_env(os.environ),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -510,10 +572,32 @@ class AntigravityCliBackend:
         session = _AntigravityCliSession(
             process, policy=scoped,
             turn_timeout_seconds=self.turn_timeout_seconds if scoped is not None else 1800,
+            expected_native_id=native_id,
+            output_schema=output_schema,
         )
         if scoped is not None:
             try:
-                await session.verify_policy()
+                await session.verify_policy(on_event=on_event)
+                if native_id is not None and session.native_id != native_id:
+                    raise RuntimeError("Antigravity did not confirm the resumed conversation ID")
+            except (TimeoutError, RuntimeError) as exc:
+                retryable = isinstance(exc, TimeoutError) or _retryable_agy_preflight_failure(session.stderr_tail)
+                await session.close()
+                if retryable and _startup_attempt < 2:
+                    if on_event is not None:
+                        await on_event({"kind": "startup_retry", "data": {
+                            "attempt": _startup_attempt + 2, "reason": str(exc),
+                            "user_task_dispatched": False,
+                        }})
+                    return await self._open_session(
+                        model, reasoning_effort=reasoning_effort, policy=policy,
+                        native_id=native_id, output_schema=output_schema, on_event=on_event,
+                        _startup_attempt=_startup_attempt + 1,
+                    )
+                if retryable:
+                    raise RuntimeError("Antigravity startup/policy probe failed after 3 attempts; "
+                                       "the user task was not dispatched. " + str(exc)) from exc
+                raise
             except BaseException:
                 await session.close()
                 raise
@@ -522,18 +606,33 @@ class AntigravityCliBackend:
 
 class _AntigravityCliSession:
     def __init__(self, process: asyncio.subprocess.Process, *, turn_timeout_seconds: float = 1800,
-                 policy: ScopedAgyPolicy | None = None):
+                 policy: ScopedAgyPolicy | None = None, expected_native_id: str | None = None,
+                 output_schema: dict | None = None):
         self.process = process
         self.turn_timeout_seconds = turn_timeout_seconds
+        self.startup_timeout_seconds = min(90, turn_timeout_seconds)
         self.previous_usage: dict[str, int] = {}
         self.stderr_tail = b""
         self.stderr_task = asyncio.create_task(self._drain_stderr())
         self.policy = policy
         self.probe_usage = None
+        self._probe_usage_reported = False
+        self.native_id: str | None = None
+        self.expected_native_id = expected_native_id
+        self.output_schema = json.loads(encode_output_schema(output_schema)) if output_schema is not None else None
 
-    async def verify_policy(self) -> None:
-        async with asyncio.timeout(self.turn_timeout_seconds):
-            result = await self._ask_within_deadline(self.policy.probe_prompt(), policy_probe=True)
+    async def verify_policy(self, *, on_event=None) -> None:
+        async with asyncio.timeout(self.startup_timeout_seconds):
+            prompt = self.policy.probe_prompt()
+            if self.output_schema is not None:
+                prompt += (
+                    "\nThis CLI session has a JSON output schema. Instead of the word READY, "
+                    "use the native finish tool to return a minimal placeholder object satisfying "
+                    "that schema after the denied write. This is only a permission probe, not an "
+                    "evaluation. If available, set batch_id=__policy_probe__ and results=[]. "
+                    "For other required scalar fields use a schema-valid placeholder."
+                )
+            result = await self._ask_within_deadline(prompt, policy_probe=True, on_event=on_event)
         self.policy.verify_probe()
         self.probe_usage = result.usage
 
@@ -579,6 +678,15 @@ class _AntigravityCliSession:
                 payload = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 raise RuntimeError(f"agy session returned invalid JSON: {exc}") from exc
+            conversation_id = payload.get("conversation_id")
+            if payload.get("event") == "result":
+                conversation_id = (payload.get("result") or {}).get("conversation_id") or conversation_id
+            if isinstance(conversation_id, str) and conversation_id:
+                if self.expected_native_id is not None and self.expected_native_id != conversation_id:
+                    raise RuntimeError("Antigravity resumed a different conversation")
+                if self.native_id is not None and self.native_id != conversation_id:
+                    raise RuntimeError("Antigravity conversation changed inside a persistent session")
+                self.native_id = conversation_id
             if payload.get("event") != "result":
                 if on_event is not None:
                     await on_event({"kind": str(payload.get("event", "activity")), "data": payload})
@@ -586,33 +694,59 @@ class _AntigravityCliSession:
             result = payload.get("result") or {}
             if result.get("status") != "SUCCESS":
                 raise RuntimeError(str(result.get("error") or result.get("status") or "agy session failed"))
+            cumulative = _decode_agy_usage(json.dumps(result).encode("utf-8"))
+            delta = {key: max(value - self.previous_usage.get(key, 0), 0)
+                     for key, value in cumulative.items()}
+            self.previous_usage = cumulative
+            turn_details = {"conversation_id": self.native_id} if self.native_id is not None else {}
+            if not policy_probe and self.probe_usage is not None and not self._probe_usage_reported:
+                turn_details["policy_probe_usage"] = self.probe_usage
+                self._probe_usage_reported = True
             if not policy_probe:
                 if self.policy is not None:
-                    denied = [item["tool"] for item in self.policy.decisions()[audit_offset:]
+                    denied = [item for item in self.policy.decisions()[audit_offset:]
                               if item.get("decision") == "deny"]
                     if denied:
-                        raise AntigravityPermissionDenied(
+                        error = AntigravityPermissionDenied(
                             f"Antigravity task policy {self.policy.policy} denied tools: "
-                            + ", ".join(str(tool) for tool in denied)
+                            + ", ".join(str(item["tool"]) for item in denied)
                             + "; the result may be incomplete."
+                            + " " + "; ".join(f"{item.get('target', '')}: {item.get('reason', '')}" for item in denied)[:1500]
                         )
+                        error.usage = delta
+                        error.details = {**turn_details, "tool_denials": denied}
+                        raise error
                 _check_agy_denials(result)
             response = result.get("response")
+            if self.output_schema is not None and not policy_probe:
+                try:
+                    value = result["structured_output"] if "structured_output" in result else json.loads(response)
+                    if self.policy is not None:
+                        finishes = [item for item in self.policy.decisions()[audit_offset:]
+                                    if item.get("tool") == "finish" and item.get("decision") == "allow"]
+                        if not finishes or finishes[-1].get("output") != value:
+                            raise ValueError("no verified fresh structured result for this turn; "
+                                             "submit the requested object using the native finish tool")
+                    response = json.dumps(validate_output(value, self.output_schema), ensure_ascii=False)
+                except (TypeError, ValueError) as exc:
+                    error = StructuredOutputError(f"invalid structured output: {exc}")
+                    error.usage = delta
+                    error.details = turn_details
+                    raise error from exc
             if not isinstance(response, str) or not response.strip():
                 raise RuntimeError(
                     "agy session returned an empty response; a tool may have been soft-denied: "
                     + self.stderr_tail.decode(errors="replace")
                 )
-            cumulative = _decode_agy_usage(json.dumps(result).encode("utf-8"))
-            delta = {
-                key: max(value - self.previous_usage.get(key, 0), 0)
-                for key, value in cumulative.items()
-            }
-            self.previous_usage = cumulative
-            details = None
+            details = {}
             if self.policy is not None:
                 details = {"tool_policy": self.policy.policy, "policy_enforcement": "agy_pre_tool_use"}
-            return BackendResponse(response, delta, details)
+            if self.native_id is not None:
+                details["conversation_id"] = self.native_id
+            details.update(turn_details)
+            if self.output_schema is not None:
+                details["structured_output"] = True
+            return BackendResponse(response, delta, details or None)
         await self.stderr_task
         authentication_error = _agy_authentication_error(self.stderr_tail)
         if authentication_error is not None:
@@ -648,7 +782,7 @@ class _AntigravityCliSession:
 
 
 def default_agy_python() -> Path:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     folder = "Scripts" if os.name == "nt" else "bin"
     name = "python.exe" if os.name == "nt" else "python"
     return root / ".venv-agy" / folder / name
@@ -680,9 +814,9 @@ class AntigravitySdkBackend:
         process = await asyncio.create_subprocess_exec(
             str(self.python),
             "-m",
-            "agent_bridge.agy_worker",
+            "agent_shuttle.agy_worker",
             cwd=str(self.workspace),
-            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+            env=worker_env({**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -23,6 +23,8 @@ from a2a.types import (
 from a2a.utils.errors import TaskNotCancelableError
 
 from .profiles import ToolPolicy
+from .structured import encode_output_schema
+from .runtime_context import require_coordinator
 
 
 log = logging.getLogger(__name__)
@@ -160,11 +162,13 @@ class BridgeClient:
         reasoning_effort: str | None = None,
         read_only: bool = False,
         tool_policy: str | None = None,
+        output_schema: dict | None = None,
     ) -> "BridgeSession":
         """Create an isolated conversation; use with ``async with`` for cleanup."""
-        return BridgeSession(self, peer_url, model, reasoning_effort, read_only, tool_policy)
+        return BridgeSession(self, peer_url, model, reasoning_effort, read_only, tool_policy, output_schema)
 
     async def close_session(self, peer_url: str, session_id: str) -> bool:
+        require_coordinator()
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
             response = await http.delete(
                 peer_url.rstrip("/") + "/bridge/sessions/" + str(uuid.UUID(session_id))
@@ -177,10 +181,12 @@ class BridgeClient:
         reasoning_effort: str | None = None, read_only: bool = False,
         tool_policy: str | None = None, session_id: str | None = None,
         request_id: str | None = None,
+        output_schema: dict | None = None,
     ) -> TaskHandle:
         """Start an A2A task and return its handle before the agent finishes."""
+        require_coordinator()
         message = _request_message(prompt, model, reasoning_effort, read_only,
-                                   tool_policy, session_id, request_id)
+                                   tool_policy, session_id, request_id, output_schema)
         request = SendMessageRequest(
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
@@ -263,6 +269,7 @@ class BridgeClient:
                 "next_cursor": end if end < len(items) else None, "total_size": len(items)}
 
     async def cancel_task(self, peer_url: str, task_id: str) -> BridgeResult:
+        require_coordinator()
         try:
             return await self._task_call(peer_url, "cancel_task", CancelTaskRequest(id=task_id))
         except TaskNotCancelableError:
@@ -306,11 +313,14 @@ class BridgeClient:
         tool_policy: str | None = None,
         session_id: str | None = None,
         request_id: str | None = None,
+        output_schema: dict | None = None,
     ) -> BridgeResult:
+        require_coordinator()
         submission = asyncio.create_task(self.submit(
             peer_url, prompt, model, reasoning_effort=reasoning_effort,
             read_only=read_only, tool_policy=tool_policy, session_id=session_id,
             request_id=request_id,
+            **({"output_schema": output_schema} if output_schema is not None else {}),
         ))
         try:
             # Keep the submission alive long enough to learn the task ID even
@@ -350,6 +360,7 @@ class BridgeSession:
         reasoning_effort: str | None,
         read_only: bool,
         tool_policy: str | None,
+        output_schema: dict | None = None,
     ):
         self.client = client
         self.peer_url = peer_url
@@ -357,6 +368,8 @@ class BridgeSession:
         self.reasoning_effort = reasoning_effort
         self.read_only = read_only
         self.tool_policy = tool_policy
+        encoded = encode_output_schema(output_schema)
+        self.output_schema = json.loads(encoded) if encoded else None
         self.id = str(uuid.uuid4())
         self._closed = False
         self._tainted = False
@@ -385,6 +398,7 @@ class BridgeSession:
                     read_only=self.read_only,
                     tool_policy=self.tool_policy,
                     session_id=self.id,
+                    **({"output_schema": self.output_schema} if self.output_schema is not None else {}),
                 )
             except (asyncio.CancelledError, TimeoutError):
                 self._tainted = True
@@ -410,7 +424,7 @@ def _validate_page(cursor, limit, maximum):
 
 
 def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, session_id,
-                     request_id=None):
+                     request_id=None, output_schema=None):
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("prompt must contain text")
     if model is not None and (not isinstance(model, str) or not model.strip()):
@@ -444,6 +458,9 @@ def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, se
         message.metadata["agent_bridge.tool_policy"] = tool_policy
     if session_id is not None:
         message.metadata["agent_bridge.session_id"] = session_id
+    schema = encode_output_schema(output_schema)
+    if schema is not None:
+        message.metadata["agent_shuttle.output_schema"] = schema
     return message
 
 
@@ -452,9 +469,13 @@ def _task_result(peer_url, task) -> BridgeResult:
     content = "\n".join(_parts(artifact.parts) for artifact in task.artifacts).strip()
     usage = None
     details = None
-    for artifact in task.artifacts:
-        if artifact.HasField("metadata"):
-            artifact_metadata = MessageToDict(artifact.metadata)
+    envelopes = [MessageToDict(task.metadata)]
+    if task.status.HasField("message"):
+        envelopes.append(MessageToDict(task.status.message.metadata))
+    envelopes.extend(MessageToDict(artifact.metadata) for artifact in task.artifacts
+                     if artifact.HasField("metadata"))
+    for artifact_metadata in envelopes:
+        if artifact_metadata:
             candidate = artifact_metadata.get("agent_bridge.usage")
             if isinstance(candidate, dict):
                 usage = {
