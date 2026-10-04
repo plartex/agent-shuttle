@@ -111,6 +111,12 @@ agent-shuttle serve codex --workspace . --port 8765
 agent-shuttle serve antigravity --workspace . --port 8766
 ```
 
+Запускайте команду в обычном сеансе Windows, где `agy models` видит ваш аккаунт.
+Перед открытием HTTP-порта сервер проверяет каталог моделей через CLI без модельного
+запроса. При отказе доступа к `%USERPROFILE%\.gemini\antigravity-cli` запуск
+завершится явной ошибкой. Ограниченный клиент должен подключаться к серверу,
+запущенному в авторизованном пользовательском сеансе.
+
 ### OpenCode или Claude Code (профиль Ollama)
 OpenCode и Claude Code работают на основе JSON-профилей. Готовые примеры профилей находятся в каталоге `examples/`:
 
@@ -182,17 +188,19 @@ asyncio.run(main())
 [mcp_servers.agent_shuttle]
 command = "C:/path/to/agent-shuttle/.venv/Scripts/agent-shuttle-mcp.exe"
 tool_timeout_sec = 1800
+env_vars = ["AGENT_SHUTTLE_PARENT_CONTEXT"]
 
 [mcp_servers.agent_shuttle.env]
 BRIDGE_WORKSPACE = "C:/path/to/project"
 ```
 
 Пример TOML подходит клиенту, который читает секции `mcp_servers`. Для клиента с JSON используйте те же значения `command` и `env` в его формате. Для MCP-запросов отдельно запускать `agent-shuttle serve` не нужно: при отсутствии подходящего сервера Agent Shuttle временно запускает его на время вызова. `BRIDGE_WORKSPACE` задаёт проверяемый проект.
+Codex передаёт маркер worker унаследованному MCP child через `env_vars`. Если другой host очищает окружение MCP child, настройте в нём передачу `AGENT_SHUTTLE_PARENT_CONTEXT`.
 
 После этого инструменты можно вызывать прямо в диалоге с агентом:
 ```text
 ask_antigravity(prompt="Проверь тесты в tests/test_backends.py", model="gemini-3.8-flash-medium")
-ask_codex(prompt="Выполни рефакторинг функции в agent_bridge/discovery.py", model="gpt-5.6-terra")
+ask_codex(prompt="Выполни рефакторинг функции в src/agent_shuttle/discovery.py", model="gpt-5.6-terra")
 ```
 
 ---

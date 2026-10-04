@@ -111,6 +111,12 @@ Runs the Antigravity headless CLI backend on port 8766:
 agent-shuttle serve antigravity --workspace . --port 8766
 ```
 
+Start this command in the normal Windows user session where `agy models` can
+access your account. Before listening, the server checks the CLI model catalog
+without a model turn. A sandboxed process that cannot access
+`%USERPROFILE%\.gemini\antigravity-cli` now exits with an explicit error.
+Restricted callers should connect to a server started in the signed-in session.
+
 ### OpenCode or Claude Code (Ollama Profile)
 OpenCode and Claude Code run using server-owned JSON profiles. Agent Shuttle includes ready-to-use profiles in `examples/`:
 
@@ -182,17 +188,19 @@ Example configuration:
 [mcp_servers.agent_shuttle]
 command = "C:/path/to/agent-shuttle/.venv/Scripts/agent-shuttle-mcp.exe"
 tool_timeout_sec = 1800
+env_vars = ["AGENT_SHUTTLE_PARENT_CONTEXT"]
 
 [mcp_servers.agent_shuttle.env]
 BRIDGE_WORKSPACE = "C:/path/to/project"
 ```
 
 The TOML example is for a client that accepts `mcp_servers` entries. Clients using JSON require the same `command` and `env` values in their own JSON structure. No separate `agent-shuttle serve` command is needed for MCP requests: Agent Shuttle starts a temporary server if no suitable peer is running. Set `BRIDGE_WORKSPACE` to the project you want the agent to inspect.
+Codex uses `env_vars` to forward the worker marker to an inherited MCP child. If another host clears its MCP child environment, configure it to forward `AGENT_SHUTTLE_PARENT_CONTEXT` as well.
 
 Then invoke tools in your agent chats:
 ```text
 ask_antigravity(prompt="Audit tests in tests/test_backends.py", model="gemini-3.8-flash-medium")
-ask_codex(prompt="Refactor function in agent_bridge/discovery.py", model="gpt-5.6-terra")
+ask_codex(prompt="Refactor function in src/agent_shuttle/discovery.py", model="gpt-5.6-terra")
 ```
 
 ---

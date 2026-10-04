@@ -9,8 +9,8 @@ from unittest.mock import patch
 from openai_codex.generated.v2_all import RateLimitResetType
 from starlette.responses import JSONResponse
 
-from agent_bridge.backends import AntigravityAuthenticationError
-from agent_bridge.info import AntigravityCliInfo, AntigravitySdkInfo, CodexInfo
+from agent_shuttle.backends import AntigravityAuthenticationError
+from agent_shuttle.info import AntigravityCliInfo, AntigravitySdkInfo, CodexInfo
 
 
 class FakeProcess:
@@ -65,7 +65,7 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
             return DelayedProcess(envelope(data))
 
         with tempfile.TemporaryDirectory() as folder, \
-             patch("agent_bridge.info.asyncio.create_subprocess_exec", side_effect=spawn):
+             patch("agent_shuttle.info.asyncio.create_subprocess_exec", side_effect=spawn):
             info = AntigravityCliInfo(Path(folder))
             await asyncio.gather(
                 info.fetch(capabilities=True, usage=False),
@@ -88,7 +88,7 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
 
         process = StalledProcess()
         with tempfile.TemporaryDirectory() as folder, \
-             patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=process):
+             patch("agent_shuttle.info.asyncio.create_subprocess_exec", return_value=process):
             info = AntigravityCliInfo(Path(folder), timeout_seconds=0.01)
             with self.assertRaisesRegex(TimeoutError, "models"):
                 await info._read("models")
@@ -111,7 +111,7 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
             ]}]}))
 
         with tempfile.TemporaryDirectory() as folder, \
-             patch("agent_bridge.info.asyncio.create_subprocess_exec", side_effect=spawn):
+             patch("agent_shuttle.info.asyncio.create_subprocess_exec", side_effect=spawn):
             info = await AntigravityCliInfo(Path(folder)).fetch()
         self.assertEqual(info["capabilities"]["selected_model"], "m")
         self.assertEqual(info["capabilities"]["selected_effort"], "high")
@@ -120,14 +120,14 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
     async def test_bad_headless_result_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             info = AntigravityCliInfo(Path(folder))
-            with patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=FakeProcess(b"", 1)):
+            with patch("agent_shuttle.info.asyncio.create_subprocess_exec", return_value=FakeProcess(b"", 1)):
                 with self.assertRaisesRegex(RuntimeError, "failed"):
                     await info._read("models")
-            with patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=FakeProcess(b"not-json")):
+            with patch("agent_shuttle.info.asyncio.create_subprocess_exec", return_value=FakeProcess(b"not-json")):
                 with self.assertRaisesRegex(RuntimeError, "no JSON"):
                     await info._read("models")
             error = json.dumps({"status": "ERROR", "error": "no account"}).encode()
-            with patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=FakeProcess(error)):
+            with patch("agent_shuttle.info.asyncio.create_subprocess_exec", return_value=FakeProcess(error)):
                 with self.assertRaisesRegex(RuntimeError, "no account"):
                     await info._read("models")
 
@@ -140,7 +140,7 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         with tempfile.TemporaryDirectory() as folder, \
-             patch("agent_bridge.info.asyncio.create_subprocess_exec", return_value=AuthFailure(b"", 1)):
+             patch("agent_shuttle.info.asyncio.create_subprocess_exec", return_value=AuthFailure(b"", 1)):
             with self.assertRaisesRegex(AntigravityAuthenticationError, "outside the caller's sandbox"):
                 await AntigravityCliInfo(Path(folder))._read("models")
 

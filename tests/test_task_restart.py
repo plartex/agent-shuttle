@@ -7,9 +7,9 @@ from pathlib import Path
 
 import uvicorn
 
-from agent_bridge.a2a_server import make_app
-from agent_bridge.client import BridgeClient
-from agent_bridge.task_store import SQLiteTaskStore
+from agent_shuttle.a2a_server import make_app
+from agent_shuttle.client import BridgeClient
+from agent_shuttle.task_store import SQLiteTaskStore
 from tests.test_task_lifecycle import SlowBackend
 
 
@@ -24,8 +24,10 @@ class TaskRestartTests(unittest.IsolatedAsyncioTestCase):
             request_id = str(uuid.uuid4())
             first = SlowBackend()
             first.release.set()
+            second = SlowBackend()
+            first.workspace = second.workspace = Path(folder)
             saved_id = None
-            for index, backend in enumerate((first, SlowBackend())):
+            for index, backend in enumerate((first, second)):
                 server = uvicorn.Server(uvicorn.Config(make_app("slow", backend, url, task_store=SQLiteTaskStore(path)),
                                                        host="127.0.0.1", port=port, log_level="error"))
                 running = asyncio.create_task(server.serve())

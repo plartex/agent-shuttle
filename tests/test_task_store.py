@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -16,7 +17,8 @@ from a2a.helpers import new_text_message, new_text_part
 from a2a.types import ListTasksRequest, Task, TaskState
 from a2a.utils.errors import InvalidParamsError
 
-from agent_bridge.task_store import CURRENT_SCHEMA_VERSION, SQLiteTaskStore
+from agent_shuttle.task_store import CURRENT_SCHEMA_VERSION, SQLiteTaskStore
+import agent_shuttle.task_store as task_store_module
 
 
 def _create_task(
@@ -86,6 +88,29 @@ class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Unsupported.*schema version"):
             SQLiteTaskStore(self.db_path)
+
+    def test_existing_v1_database_gains_listing_indexes_without_losing_tasks(self) -> None:
+        SQLiteTaskStore(self.db_path)
+        task = _create_task("old-task", context_id="ctx-old")
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute("INSERT INTO tasks (owner,task_id,task_data,context_id,state,status_timestamp_iso) "
+                         "VALUES (?,?,?,?,?,?)",
+                         ("", task.id, task.SerializeToString(), task.context_id,
+                          int(task.status.state), task.status.timestamp.ToJsonString()))
+            for name in ("idx_tasks_owner_updated", "idx_tasks_owner_context_updated",
+                         "idx_tasks_owner_state_updated"):
+                conn.execute(f"DROP INDEX IF EXISTS {name}")
+            conn.execute("PRAGMA user_version = 1")
+            conn.commit()
+        SQLiteTaskStore(self.db_path)
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], CURRENT_SCHEMA_VERSION)
+            indexes = {row[1] for row in conn.execute("PRAGMA index_list(tasks)")}
+            self.assertEqual(conn.execute("SELECT context_id FROM tasks WHERE task_id='old-task'").fetchone()[0],
+                             "ctx-old")
+        self.assertIn("idx_tasks_owner_updated", indexes)
+        self.assertIn("idx_tasks_owner_context_updated", indexes)
+        self.assertIn("idx_tasks_owner_state_updated", indexes)
 
     def test_connections_closed_explicitly(self) -> None:
         # Verifies that initializing and reading from SQLiteTaskStore leaves no locked file handles on Windows.
@@ -393,6 +418,57 @@ class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
         # Invalid page token raises InvalidParamsError
         with self.assertRaises(InvalidParamsError):
             await store.list(ListTasksRequest(page_token="invalid-token-value"))
+
+    async def test_list_reads_only_page_blobs_after_sql_filtering(self) -> None:
+        store = SQLiteTaskStore(self.db_path)
+        for index in range(12):
+            task = _create_task(
+                f"task-{index:02d}",
+                context_id="wanted" if index % 2 == 0 else "other",
+                state=TaskState.TASK_STATE_WORKING if index % 3 == 0 else TaskState.TASK_STATE_COMPLETED,
+                timestamp_iso=f"2026-10-01T10:{index:02d}:00Z",
+                artifact_texts=["x" * 20000],
+            )
+            await store.save(task)
+
+        statements = []
+        original_connect = sqlite3.connect
+
+        def traced_connect(*args, **kwargs):
+            connection = original_connect(*args, **kwargs)
+            connection.set_trace_callback(statements.append)
+            return connection
+
+        with patch.object(task_store_module.sqlite3, "connect", side_effect=traced_connect):
+            response = await store.list(ListTasksRequest(
+                context_id="wanted", status=TaskState.TASK_STATE_COMPLETED, page_size=2))
+
+        self.assertEqual([task.id for task in response.tasks], ["task-10", "task-08"])
+        self.assertEqual(response.total_size, 4)
+        blob_reads = [sql.upper() for sql in statements
+                      if sql.lstrip().upper().startswith("SELECT") and "TASK_DATA" in sql.upper()]
+        self.assertEqual(len(blob_reads), 1)
+        self.assertIn("CONTEXT_ID", blob_reads[0])
+        self.assertIn("STATE", blob_reads[0])
+        self.assertIn("LIMIT", blob_reads[0])
+        self.assertIn("OFFSET", blob_reads[0])
+
+    async def test_list_token_must_match_filters_and_ties_are_stable(self) -> None:
+        store = SQLiteTaskStore(self.db_path)
+        for task_id, context_id, timestamp in (
+            ("c", "wanted", "2026-10-01T10:00:00Z"),
+            ("b", "wanted", "2026-10-01T10:00:00Z"),
+            ("a", "wanted", "2026-10-01T10:00:00Z"),
+            ("hidden", "other", "2026-10-01T11:00:00Z"),
+        ):
+            await store.save(_create_task(task_id, context_id=context_id, timestamp_iso=timestamp))
+        first = await store.list(ListTasksRequest(context_id="wanted", page_size=2))
+        self.assertEqual([task.id for task in first.tasks], ["c", "b"])
+        second = await store.list(ListTasksRequest(
+            context_id="wanted", page_size=2, page_token=first.next_page_token))
+        self.assertEqual([task.id for task in second.tasks], ["a"])
+        with self.assertRaises(InvalidParamsError):
+            await store.list(ListTasksRequest(context_id="other", page_token=first.next_page_token))
 
     async def test_list_projections_history_length_and_artifacts(self) -> None:
         store = SQLiteTaskStore(self.db_path)

@@ -53,7 +53,9 @@ pip install C:\path\to\agent-shuttle
 # pip install -e C:\path\to\agent-shuttle
 ```
 
-Once installed, the CLI tools (`agent-shuttle`, `agent-shuttle-mcp`) and Python API (`agent_shuttle`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports. Existing `agent_bridge` imports and `agent-bridge` commands remain supported as compatibility aliases; A2A metadata keys under `agent_bridge.*` are unchanged.
+Once installed, the CLI tools (`agent-shuttle`, `agent-shuttle-mcp`) and Python API (`agent_shuttle`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports. Version 0.6 removes the old `agent_bridge` Python imports and `agent-bridge` commands; the `agent_bridge.*` A2A metadata keys remain part of the wire protocol.
+
+The distribution has one Python package: `src/agent_shuttle/`. This is the standard `src` layout; there is no second implementation or compatibility package.
 
 ---
 

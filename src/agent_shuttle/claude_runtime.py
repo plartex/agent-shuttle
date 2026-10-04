@@ -10,6 +10,7 @@ import uuid
 
 from .backends import BackendResponse
 from .profiles import AgentProfile, ProfileSelection, ToolPolicy
+from .runtime_context import worker_env
 
 
 _ESSENTIAL_ENV = {
@@ -35,7 +36,7 @@ def _environment(profile: AgentProfile, config_dir: str) -> dict[str, str]:
             if not value:
                 raise RuntimeError(f"Missing credential environment variable {profile.credential_env}")
             env[profile.credential_env] = value
-    return env
+    return worker_env(env)
 
 
 def _usage(result: dict, provider: str) -> tuple[dict[str, int], dict]:
@@ -97,7 +98,7 @@ class ClaudeCodeSession:
         self.selection = selection
         self.runtime = runtime
         self.session_id = str(uuid.uuid4())
-        self.config_dir = tempfile.TemporaryDirectory(prefix="agent-bridge-claude-")
+        self.config_dir = tempfile.TemporaryDirectory(prefix="agent-shuttle-claude-")
         self.started = False
         self.closed = False
 

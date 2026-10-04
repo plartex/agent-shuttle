@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import httpx
 
-from agent_bridge.opencode_runtime import OpenCodeRuntime, _child_env, _inline_config, _resolve_command, _usage
-from agent_bridge.profiles import AgentProfile, ToolPolicy
+from agent_shuttle.opencode_runtime import OpenCodeRuntime, _child_env, _inline_config, _resolve_command, _usage
+from agent_shuttle.profiles import AgentProfile, ToolPolicy
 
 
 class OpenCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -190,8 +190,8 @@ class OpenCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
             captured.append((args, kwargs))
             return FakeProcess()
 
-        with patch("agent_bridge.opencode_runtime.asyncio.create_subprocess_exec", side_effect=spawn), \
-             patch("agent_bridge.opencode_runtime.httpx.AsyncClient", FakeClient):
+        with patch("agent_shuttle.opencode_runtime.asyncio.create_subprocess_exec", side_effect=spawn), \
+             patch("agent_shuttle.opencode_runtime.httpx.AsyncClient", FakeClient):
             runtime = OpenCodeRuntime(profile)
             session = await runtime.open_session(profile.resolve(None, None, None))
             await session.close()

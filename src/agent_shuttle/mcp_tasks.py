@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from .client import BridgeClient, _TERMINAL_STATES
 from .managed import HarnessConfigurationMismatch, HarnessLaunch, connect_harness
+from .runtime_context import require_coordinator
 
 
 class TaskGateway:
@@ -63,6 +64,7 @@ class TaskGateway:
         return launch, peer
 
     async def submit(self, launch, prompt, model, reasoning_effort, request_id):
+        require_coordinator()
         async with self.lock:
             if self.closed:
                 raise RuntimeError("Task gateway is closed")

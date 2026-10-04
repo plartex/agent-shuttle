@@ -20,9 +20,11 @@ from a2a.utils.constants import DEFAULT_LIST_TASKS_PAGE_SIZE
 from a2a.utils.errors import InvalidParamsError
 from a2a.utils.task import decode_page_token, encode_page_token
 
+from .runtime_context import is_worker_context, nested_data_path
+
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 class SQLiteTaskStore(TaskStore):
@@ -35,7 +37,7 @@ class SQLiteTaskStore(TaskStore):
     ) -> None:
         if str(path) == ":memory:":
             raise ValueError("SQLiteTaskStore requires a file; use InMemoryTaskStore for ephemeral tasks")
-        self.path = Path(path).resolve()
+        self.path = nested_data_path(path) if is_worker_context() else Path(path).resolve()
         self.owner_resolver = owner_resolver or resolve_user_scope
         self._write_lock = asyncio.Lock()
         self._owner_file = None
@@ -117,6 +119,22 @@ class SQLiteTaskStore(TaskStore):
                 """)
                 conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_bindings_owner_task ON request_bindings(owner, task_id)
+                """)
+                conn.execute("PRAGMA user_version = 1")
+                conn.commit()
+                version = 1
+            if version == 1:
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_tasks_owner_updated
+                    ON tasks(owner, status_timestamp_iso DESC, task_id DESC)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_tasks_owner_context_updated
+                    ON tasks(owner, context_id, status_timestamp_iso DESC, task_id DESC)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_tasks_owner_state_updated
+                    ON tasks(owner, state, status_timestamp_iso DESC, task_id DESC)
                 """)
                 conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
                 conn.commit()
@@ -203,72 +221,30 @@ class SQLiteTaskStore(TaskStore):
     ) -> a2a_pb2.ListTasksResponse:
         owner = self._resolve_owner(context)
 
-        def _fetch_all() -> list[bytes]:
-            with contextlib.closing(sqlite3.connect(self.path, timeout=15.0)) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT task_data FROM tasks WHERE owner = ?",
-                    (owner,),
-                )
-                return [row[0] for row in cursor.fetchall()]
-
-        raw_list = await asyncio.to_thread(_fetch_all)
-        tasks: list[Task] = []
-        for raw in raw_list:
-            t = Task()
-            t.ParseFromString(raw)
-            tasks.append(t)
-
-        # Filter: context_id
-        if getattr(params, "context_id", None):
-            tasks = [t for t in tasks if t.context_id == params.context_id]
-
-        # Filter: status state
+        conditions = ["owner = ?"]
+        values: list[Any] = [owner]
+        context_id = getattr(params, "context_id", None)
+        if context_id:
+            conditions.append("context_id = ?")
+            values.append(context_id)
         status_filter = getattr(params, "status", None)
         if status_filter:
-            tasks = [t for t in tasks if t.status.state == status_filter]
-
-        # Filter: status_timestamp_after
+            conditions.append("state = ?")
+            values.append(int(status_filter))
+        cutoff_iso = None
         if hasattr(params, "HasField") and params.HasField("status_timestamp_after"):
             cutoff_iso = params.status_timestamp_after.ToJsonString()
-            tasks = [
-                t
-                for t in tasks
-                if (
-                    t.HasField("status")
-                    and t.status.HasField("timestamp")
-                    and t.status.timestamp.ToJsonString() >= cutoff_iso
-                )
-            ]
         elif not hasattr(params, "HasField") and getattr(params, "status_timestamp_after", None) is not None:
             val = params.status_timestamp_after
             cutoff_iso = val.ToJsonString() if hasattr(val, "ToJsonString") else str(val)
-            tasks = [
-                t
-                for t in tasks
-                if (
-                    t.HasField("status")
-                    and t.status.HasField("timestamp")
-                    and t.status.timestamp.ToJsonString() >= cutoff_iso
-                )
-            ]
+        if cutoff_iso is not None:
+            conditions.extend(["status_timestamp_iso <> ''", "status_timestamp_iso >= ?"])
+            values.append(cutoff_iso)
+        where = " AND ".join(conditions)
+        order = "ORDER BY status_timestamp_iso DESC, task_id DESC"
 
-        # Order tasks by last update time. To ensure stable sorting, in cases where
-        # timestamps are null or not unique, do a second order comparison of IDs.
-        tasks.sort(
-            key=lambda t: (
-                t.status.HasField("timestamp") if t.HasField("status") else False,
-                t.status.timestamp.ToJsonString()
-                if t.HasField("status") and t.status.HasField("timestamp")
-                else "",
-                t.id,
-            ),
-            reverse=True,
-        )
-
-        total_size = len(tasks)
-        start_idx = 0
         page_token = getattr(params, "page_token", "") or ""
+        start_task_id = None
         if page_token:
             try:
                 start_task_id = decode_page_token(page_token)
@@ -276,23 +252,50 @@ class SQLiteTaskStore(TaskStore):
                 raise
             except Exception as exc:
                 raise InvalidParamsError(f"Invalid page token: {page_token}") from exc
-            valid_token = False
-            for i, t in enumerate(tasks):
-                if t.id == start_task_id:
-                    start_idx = i
-                    valid_token = True
-                    break
-            if not valid_token:
-                raise InvalidParamsError(f"Invalid page token: {page_token}")
-
         page_size = getattr(params, "page_size", None) or DEFAULT_LIST_TASKS_PAGE_SIZE
-        end_idx = start_idx + page_size
-        next_page_token = (
-            encode_page_token(tasks[end_idx].id)
-            if end_idx < total_size
-            else None
-        )
-        tasks = tasks[start_idx:end_idx]
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size < 1:
+            raise InvalidParamsError("page_size must be a positive integer")
+
+        def _fetch_page() -> tuple[int, list[bytes], str | None]:
+            with contextlib.closing(sqlite3.connect(self.path, timeout=15.0)) as conn:
+                # One read snapshot keeps count, token position and page consistent.
+                conn.execute("BEGIN")
+                total = conn.execute(f"SELECT COUNT(*) FROM tasks WHERE {where}", values).fetchone()[0]
+                offset = 0
+                if start_task_id is not None:
+                    token_row = conn.execute(
+                        f"SELECT status_timestamp_iso FROM tasks WHERE {where} AND task_id = ?",
+                        (*values, start_task_id),
+                    ).fetchone()
+                    if token_row is None:
+                        raise InvalidParamsError(f"Invalid page token: {page_token}")
+                    timestamp = token_row[0]
+                    offset = conn.execute(
+                        f"""SELECT COUNT(*) FROM tasks WHERE {where}
+                            AND (status_timestamp_iso > ? OR
+                                 (status_timestamp_iso = ? AND task_id > ?))""",
+                        (*values, timestamp, timestamp, start_task_id),
+                    ).fetchone()[0]
+                rows = conn.execute(
+                    f"SELECT task_data FROM tasks WHERE {where} {order} LIMIT ? OFFSET ?",
+                    (*values, page_size, offset),
+                ).fetchall()
+                next_id = None
+                if offset + len(rows) < total:
+                    next_id = conn.execute(
+                        f"SELECT task_id FROM tasks WHERE {where} {order} LIMIT 1 OFFSET ?",
+                        (*values, offset + len(rows)),
+                    ).fetchone()[0]
+                conn.commit()
+                return total, [row[0] for row in rows], next_id
+
+        total_size, raw_page, next_id = await asyncio.to_thread(_fetch_page)
+        tasks: list[Task] = []
+        for raw in raw_page:
+            task = Task()
+            task.ParseFromString(raw)
+            tasks.append(task)
+        next_page_token = encode_page_token(next_id) if next_id is not None else None
 
         # Apply projections (history_length, artifacts)
         history_length = getattr(params, "history_length", None)

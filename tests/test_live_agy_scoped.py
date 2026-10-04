@@ -32,7 +32,7 @@ class LiveScopedMcpTests(unittest.IsolatedAsyncioTestCase):
         env = {key: value for key, value in os.environ.items()
                if key not in {"BRIDGE_CODEX_URL", "BRIDGE_ANTIGRAVITY_URL", "BRIDGE_AGENTS_JSON"}}
         env["BRIDGE_AGY_COMMAND"] = str(repository / "bin" / "agy.exe")
-        params = StdioServerParameters(command=sys.executable, args=["-m", "agent_bridge.mcp_server"], env=env)
+        params = StdioServerParameters(command=sys.executable, args=["-m", "agent_shuttle.mcp_server"], env=env)
         results = []
         async with asyncio.timeout(240):
             async with stdio_client(params) as (reader, writer):

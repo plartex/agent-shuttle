@@ -7,13 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock
 
-from agent_bridge.backends import (
+from agent_shuttle.backends import (
     AntigravityAuthenticationError, AntigravityCliBackend, AntigravityPermissionDenied,
     AntigravitySdkBackend, CodexBackend,
     _AntigravityCliSession, _decode_agy_result, _decode_agy_usage,
     _run_codex_thread,
 )
-from agent_bridge.agy_policy import ScopedAgyPolicy
+from agent_shuttle.agy_policy import ScopedAgyPolicy
 
 
 class AntigravityCliBackendTests(unittest.TestCase):
@@ -102,6 +102,60 @@ class _FakeProcess:
 
 
 class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_resume_keeps_native_conversation_and_reverifies_read_only(self):
+        native_id = "48003d7a-46f2-41df-b710-6785462d04c0"
+
+        async def spawn(*argv, **kwargs):
+            self.assertEqual(argv[argv.index("--conversation") + 1], native_id)
+            control = Path(kwargs["cwd"])
+            (control / "decisions.jsonl").write_text(json.dumps({
+                "tool": "write_to_file", "decision": "deny",
+                "target": str(control / "policy-canary.txt"),
+            }) + "\n")
+            return _FakeProcess([
+                {"event": "init", "conversation_id": native_id},
+                {"event": "result", "result": {"status": "SUCCESS", "response": "READY"}},
+                {"event": "result", "result": {"status": "SUCCESS", "response": "done"}},
+            ])
+
+        with tempfile.TemporaryDirectory() as folder, patch(
+            "agent_shuttle.backends.asyncio.create_subprocess_exec", side_effect=spawn,
+        ):
+            session = await AntigravityCliBackend(Path(folder))._resume_scoped_session(
+                native_id, "gemini-3.8-flash-high", reasoning_effort="high", tool_policy="read_only",
+            )
+            try:
+                self.assertEqual(session.native_id, native_id)
+                result = await session.ask("inspect")
+                self.assertEqual(result.details["conversation_id"], native_id)
+                self.assertEqual(result.details["tool_policy"], "read_only")
+                self.assertEqual(len(session.process.stdin.lines), 2)
+            finally:
+                await session.close()
+
+    async def test_resume_rejects_new_or_unreported_native_conversation(self):
+        native_id = "48003d7a-46f2-41df-b710-6785462d04c0"
+        for reported_id in ("another-conversation", None):
+            with self.subTest(reported_id=reported_id), tempfile.TemporaryDirectory() as folder:
+                process = _FakeProcess([
+                    {"event": "init", "conversation_id": reported_id},
+                    {"event": "result", "result": {"status": "SUCCESS", "response": "READY"}},
+                ])
+
+                async def spawn(*argv, **kwargs):
+                    control = Path(kwargs["cwd"])
+                    (control / "decisions.jsonl").write_text(json.dumps({
+                        "tool": "write_to_file", "decision": "deny",
+                        "target": str(control / "policy-canary.txt"),
+                    }) + "\n")
+                    return process
+
+                with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", side_effect=spawn):
+                    with self.assertRaisesRegex(RuntimeError, "conversation"):
+                        await AntigravityCliBackend(Path(folder))._resume_scoped_session(native_id, read_only=True)
+                self.assertTrue(process.stdin.closed)
+                self.assertEqual(len(process.stdin.lines), 1)
+
     async def test_stream_exit_after_prompt_reports_auth_failure(self):
         process = _FakeProcess([])
         process.stderr = asyncio.StreamReader()
@@ -198,7 +252,7 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
             process = _FakeProcess([{"event": "result", "result": {
                 "status": "SUCCESS", "response": "READY",
             }}])
-            with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
+            with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
                 with self.assertRaisesRegex(RuntimeError, "policy probe"):
                     await backend.run("inspect", read_only=True)
             self.assertEqual(len(process.stdin.lines), 1)
@@ -236,7 +290,7 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(argv, ["taskkill", "/PID", "12345", "/T", "/F"])
                 loop.call_soon_threadsafe(process.kill)
 
-            with patch("agent_bridge.backends.subprocess.run", side_effect=stop_tree) as stop:
+            with patch("agent_shuttle.backends.subprocess.run", side_effect=stop_tree) as stop:
                 with self.assertRaisesRegex(TimeoutError, "agy session"):
                     await session.ask("hello")
             stop.assert_called_once()
@@ -266,7 +320,7 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_and_conflicting_tool_policies_are_rejected_before_starting_cli(self):
         with tempfile.TemporaryDirectory() as folder:
             backend = AntigravityCliBackend(Path(folder))
-            with patch("agent_bridge.backends.asyncio.create_subprocess_exec") as spawn:
+            with patch("agent_shuttle.backends.asyncio.create_subprocess_exec") as spawn:
                 with self.assertRaisesRegex(ValueError, "unknown"):
                     await backend.run("inspect", tool_policy="unknown")
                 with self.assertRaisesRegex(ValueError, "conflicts"):
@@ -294,7 +348,7 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
                         {"event": "result", "result": {"status": "SUCCESS", "response": "done"}},
                     ])
                 with self.subTest(policy=policy), patch(
-                    "agent_bridge.backends.asyncio.create_subprocess_exec", side_effect=spawn,
+                    "agent_shuttle.backends.asyncio.create_subprocess_exec", side_effect=spawn,
                 ):
                     result = await backend.run("inspect", tool_policy=policy)
                 self.assertEqual(result.text, "done")
@@ -303,7 +357,7 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_stream_all_permissions_requires_explicit_opt_in(self):
         with tempfile.TemporaryDirectory() as folder:
             process = _FakeProcess([])
-            with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
+            with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
                 session = await AntigravityCliBackend(
                     Path(folder), dangerously_skip_permissions=True,
                 ).open_session()
@@ -334,10 +388,27 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.usage["input_tokens"], 100)
         self.assertEqual(second.usage["input_tokens"], 30)
         self.assertEqual(second.usage["cache_read_tokens"], 80)
+        self.assertEqual(first.details["conversation_id"], "test")
+        self.assertEqual(second.details["conversation_id"], "test")
         self.assertEqual(len(process.stdin.lines), 2)
         self.assertEqual(json.loads(process.stdin.lines[1])["message"]["content"], "two")
         await session.close()
         self.assertTrue(process.stdin.closed)
+
+    async def test_stream_rejects_an_unexpected_conversation_switch(self):
+        process = _FakeProcess([
+            {"event": "init", "conversation_id": "first"},
+            {"event": "result", "result": {"status": "SUCCESS", "response": "ok"}},
+            {"event": "init", "conversation_id": "second"},
+            {"event": "result", "result": {"status": "SUCCESS", "response": "ok"}},
+        ])
+        session = _AntigravityCliSession(process)
+        try:
+            await session.ask("one")
+            with self.assertRaisesRegex(RuntimeError, "conversation changed"):
+                await session.ask("two")
+        finally:
+            await session.close()
 
     async def test_stream_activity_is_reported_before_result(self):
         process = _FakeProcess([
@@ -507,7 +578,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 return self.returncode
 
         process = StalledProcess()
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=process) as spawn:
             with self.assertRaisesRegex(TimeoutError, "agy"):
                 await AntigravityCliBackend(
                     Path.cwd(), turn_timeout_seconds=0.01,
@@ -553,7 +624,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                     "input_tokens": 10, "output_tokens": 2,
                 }}).encode(), b""
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
             response = await AntigravityCliBackend(Path.cwd()).run(
                 "hello", "chosen", reasoning_effort="high",
             )
@@ -593,7 +664,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 raise AssertionError("communicate() would close stdin before the turn")
 
         process = Process()
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec",
                    return_value=process) as spawn:
             result = await AntigravityCliBackend(Path.cwd()).run("hello")
         self.assertEqual(result.text, "OK")
@@ -608,7 +679,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             async def communicate(self):
                 return b'{"status":"SUCCESS","response":"ok"}', b""
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
             await AntigravityCliBackend(
                 Path.cwd(), dangerously_skip_permissions=True,
             ).run("hello")
@@ -624,7 +695,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             async def communicate(self):
                 return b'{"status":"SUCCESS","response":"ok"}', b""
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=Process()):
             answer = await AntigravityCliBackend(
                 Path.cwd(), dangerously_skip_permissions=True,
             ).run("inspect", tool_policy="full_access")
@@ -637,7 +708,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             async def communicate(self):
                 return b"", b"bad model"
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=Process()):
             with self.assertRaisesRegex(RuntimeError, "bad model"):
                 await AntigravityCliBackend(Path.cwd()).run("hello")
 
@@ -655,7 +726,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                     b"Error: authentication timed out."
                 )
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=Process()) as spawn:
             with self.assertRaisesRegex(
                 AntigravityAuthenticationError,
                 "Antigravity CLI authentication",
@@ -670,7 +741,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             async def communicate(self):
                 return b"", b"error getting token source: You are not logged into Antigravity."
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=Process()):
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=Process()):
             with self.assertRaises(AntigravityAuthenticationError) as captured:
                 await AntigravityCliBackend(Path.cwd()).run("hello")
         self.assertIn("Verify that the CLI is signed in", str(captured.exception))
@@ -691,9 +762,9 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             b"net/http: TLS handshake timeout"
         ))
         success = Process(0, stdout=b'{"status":"SUCCESS","response":"OK"}')
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec",
                    side_effect=[failure, success]) as spawn, \
-             patch("agent_bridge.backends.asyncio.sleep"):
+             patch("agent_shuttle.backends.asyncio.sleep"):
             answer = await AntigravityCliBackend(Path.cwd()).run("hello")
         self.assertEqual(answer.text, "OK")
         self.assertEqual(answer.details, {"preflight_retries": 1})
@@ -714,9 +785,9 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             b"The service is currently unavailable.\n"
         ))
         success = Process(0, stdout=b'{"status":"SUCCESS","response":"OK"}')
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec",
                    side_effect=[unavailable, success]) as spawn, \
-             patch("agent_bridge.backends.asyncio.sleep"):
+             patch("agent_shuttle.backends.asyncio.sleep"):
             answer = await AntigravityCliBackend(Path.cwd()).run(
                 "hello", model="gemini-3.8-flash-low",
             )
@@ -736,9 +807,9 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 return b"", (b"error: Eligibility check failed: UNAVAILABLE (code 503): "
                              b"The service is currently unavailable.\n")
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec",
                    return_value=Process()) as spawn, \
-             patch("agent_bridge.backends.asyncio.sleep"):
+             patch("agent_shuttle.backends.asyncio.sleep"):
             with self.assertRaisesRegex(RuntimeError, "after 3 attempt") as captured:
                 await AntigravityCliBackend(Path.cwd()).run(
                     "hello", model="gemini-3.8-flash-low",
@@ -754,7 +825,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             async def communicate(self):
                 return b"", b"error: model request failed: UNAVAILABLE (code 503)"
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec",
                    return_value=Process()) as spawn:
             with self.assertRaisesRegex(RuntimeError, "model request failed"):
                 await AntigravityCliBackend(Path.cwd()).run("hello")
@@ -768,9 +839,9 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 return b"", (b"Eligibility check failed: failed to get profile picture: "
                              b"net/http: TLS handshake timeout")
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec",
                    return_value=Process()) as spawn, \
-             patch("agent_bridge.backends.asyncio.sleep"):
+             patch("agent_shuttle.backends.asyncio.sleep"):
             with self.assertRaisesRegex(RuntimeError, "after 3 attempt"):
                 await AntigravityCliBackend(Path.cwd()).run("hello")
         self.assertEqual(spawn.call_count, 3)
@@ -782,7 +853,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
             async def communicate(self):
                 return b"", b"error: model request failed: TLS handshake timeout"
 
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec",
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec",
                    return_value=Process()) as spawn:
             with self.assertRaisesRegex(RuntimeError, "model request failed"):
                 await AntigravityCliBackend(Path.cwd()).run("hello")
@@ -807,18 +878,18 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
 
         backend = AntigravitySdkBackend(Path.cwd(), Path(sys.executable))
         success = Process(b'noise\nAGENT_BRIDGE_RESULT={"ok": true, "text": "reply"}\n')
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=success):
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=success):
             self.assertEqual(await backend.run("hello", "model"), "reply")
         self.assertEqual(success.payload["model"], "model")
 
         failure = Process(b'AGENT_BRIDGE_RESULT={"ok": false, "error": "denied"}\n')
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec", return_value=failure):
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=failure):
             with self.assertRaisesRegex(RuntimeError, "denied"):
                 await backend.run("hello")
 
     async def test_sdk_effort_rejected_without_starting_worker(self):
         backend = AntigravitySdkBackend(Path.cwd(), Path(sys.executable))
-        with patch("agent_bridge.backends.asyncio.create_subprocess_exec") as spawn:
+        with patch("agent_shuttle.backends.asyncio.create_subprocess_exec") as spawn:
             with self.assertRaisesRegex(RuntimeError, "does not expose reasoning"):
                 await backend.run("hello", reasoning_effort="high")
             spawn.assert_not_called()

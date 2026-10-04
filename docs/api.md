@@ -38,7 +38,7 @@ from agent_shuttle import (
 
 ### `TaskManager` library API
 
-`TaskManager` owns execution and durable state directly. It does not launch a local HTTP or MCP server. Keep the manager open while its tasks run:
+`TaskManager` is the Python facade for a library task repository, event stream service, and worker lifecycle service. It does not launch a local HTTP or MCP server. Keep the manager open while its tasks run:
 
 ```python
 from agent_shuttle import TaskManager
@@ -56,7 +56,7 @@ Transcript pages have a 60,000-character budget. A large event is represented by
 
 `create_session(agent_id, *, model, reasoning_effort, tool_policy)` returns a `Session` with `dispatch(prompt)` and `end()`. `list_sessions()` exposes session status. Native turns are serialized per session, and model, effort and policy remain pinned. Codex sessions with a saved native thread ID can enter `suspended` after restart and resume on the next turn. A session whose turn was interrupted is always `interrupted` and requires a new session. Backends without verified resume support also mark sessions `interrupted`. `reap_idle_sessions()` ends idle sessions. `list_agents()` returns static backend capabilities; `agent_info(agent_id)` can retrieve live model and quota data for the built-in backends. `set_preference(agent_id, model=..., reasoning_effort=...)` persists default choices and `get_preference(agent_id)` reads them.
 
-By default, SQLite state lives in `<workspace>/.agent-shuttle/library-tasks.sqlite3`. Supply `database=...` to choose another path or `memory=True` for ephemeral state. An owner lock prevents two managers writing the same database at once. Finished tasks survive restart. Tasks interrupted by process death become failed with `worker_interrupted` and are never executed twice. A2A servers also keep their protocol task store as a projection alongside this library database.
+By default, SQLite state lives in `<workspace>/.agent-shuttle/library-tasks.sqlite3`. Supply `database=...` to choose another path or `memory=True` for ephemeral state. `LibraryTaskRepository` owns the schema, SQL, transactions, and owner lock. `EventStreamService` replays durable events and delivers live backend events; a detached subscriber does not change the worker result. `WorkerLifecycleService` runs and cancels workers and manages native sessions. Finished tasks survive restart. Tasks interrupted by process death become failed with `worker_interrupted` and are never executed twice. A2A servers also keep their protocol task store as a projection alongside this library database.
 
 ### `ShuttleClient`
 
@@ -238,6 +238,29 @@ Exception raised when the Antigravity CLI cannot access its account from the Bri
 
 ---
 
+### Structured Antigravity responses
+
+`TaskManager.dispatch`, `create_session`, `ensure_session`, and the client
+`submit`, `ask`, and `session` methods accept `output_schema`, a JSON Schema
+object. The schema is pinned for the lifetime of a session; changing it requires
+a new session. Unsupported backends reject the request before dispatch.
+The A2A identity advertises `structured_output`; schema metadata uses
+`agent_shuttle.output_schema`.
+
+Antigravity receives the schema through `--json-schema`. Scoped sessions use a
+temporary schema file and allow the native `finish` data-return tool. File,
+command and MCP permissions remain governed by the selected tool policy.
+Each scoped response must match both the schema and the current turn's audited
+`finish` output; stale structured output is rejected. Completed schema or tool
+denial failures allow a corrected turn in the same conversation.
+
+Startup permission verification has a separate deadline of at most 90 seconds
+and up to three attempts for a timeout or known transient preflight failure.
+The requested model and tool policy are preserved, and the user task is sent
+only after verification. Transport failure during a user turn interrupts the
+session. `policy_probe_usage` is reported once in the first user turn's details;
+completed failed turns preserve their reported usage.
+
 ## HTTP Endpoints Reference
 
 Every Agent Shuttle A2A server exposes the following endpoints on loopback (`127.0.0.1`):
@@ -256,7 +279,7 @@ Every Agent Shuttle A2A server exposes the following endpoints on loopback (`127
 
 ## Command-Line Interface (CLI)
 
-The CLI entry point is `agent-shuttle` (or `python -m agent_shuttle`). Legacy `BridgeClient`, `agent_bridge`, and `agent-bridge` names remain available.
+The CLI entry point is `agent-shuttle` (or `python -m agent_shuttle`). `BridgeClient` remains a class in the `agent_shuttle` API. Version 0.6 removes the `agent_bridge` import package and `agent-bridge` commands.
 
 ### `agent-shuttle serve`
 
@@ -276,7 +299,7 @@ agent-shuttle serve antigravity --port 8766 [--workspace <DIR>] `
 agent-shuttle serve profile --profile .\profile.json --port 8767 [--workspace <DIR>]
 ```
 
-`--task-db` enables SQLite persistence for tasks and request IDs. `--execution-timeout-seconds` (default 1800) bounds a whole turn; `--stall-timeout-seconds` (default 1800) bounds silence between backend progress events. Managed MCP task peers use a SQLite file automatically.
+`--task-db` enables SQLite persistence for tasks and request IDs. `--execution-timeout-seconds` (default 1800) starts when a task enters `WORKING` and includes Git preparation, the native-session queue, and backend work. `--stall-timeout-seconds` (default 1800) starts when backend work begins and bounds silence between progress events; it does not count preparation or queue time. Git inspection has its own five-second limit. If the backend has returned but final Git inspection exhausts the remaining execution budget, the answer is kept with `files_changed_state="unavailable"`. Cancellation and resource cleanup can continue after a timeout. Managed MCP task peers use a SQLite file automatically.
 
 ### `agent-shuttle ask`
 

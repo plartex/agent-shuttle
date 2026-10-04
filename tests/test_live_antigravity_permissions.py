@@ -14,8 +14,8 @@ import uuid
 from pathlib import Path
 from time import monotonic
 
-from agent_bridge import BridgeClient, HarnessLaunch, connect_harness, discover_harnesses
-from agent_bridge.backends import AntigravityCliBackend
+from agent_shuttle import BridgeClient, HarnessLaunch, connect_harness, discover_harnesses
+from agent_shuttle.backends import AntigravityCliBackend
 
 
 @unittest.skipUnless(

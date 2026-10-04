@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_bridge.agy_policy import ScopedAgyPolicy, evaluate_tool_call
+from agent_shuttle.agy_policy import ScopedAgyPolicy, evaluate_tool_call
 
 
 class ScopedAgyPolicyTests(unittest.TestCase):
@@ -30,6 +30,16 @@ class ScopedAgyPolicyTests(unittest.TestCase):
         ):
             with self.subTest(tool=tool):
                 self.assertEqual(self.decision("read_only", tool, **{key: str(path)}), "allow")
+
+    def test_structured_finish_is_a_data_return_not_a_filesystem_tool(self):
+        call = {"name": "finish", "args": {"answer": 42}}
+        self.assertEqual(evaluate_tool_call("no_tools", self.root, call)["decision"], "deny")
+        schema = {"type": "object", "properties": {"answer": {"type": "integer"}}}
+        self.assertEqual(evaluate_tool_call("no_tools", self.root, call,
+                                          output_schema=schema)["decision"], "allow")
+        self.assertEqual(evaluate_tool_call("no_tools", self.root, {
+            "name": "run_command", "args": {"CommandLine": "echo unsafe"},
+        }, output_schema=schema)["decision"], "deny")
 
     def test_workspace_alias_resolves_to_same_project(self):
         alias = self.root.parent / "project-alias"
@@ -108,6 +118,20 @@ class ScopedAgyPolicyTests(unittest.TestCase):
             scoped.canary.write_text("escaped", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "policy probe"):
                 scoped.verify_probe()
+
+    def test_read_denial_audit_preserves_path_and_specific_reason(self):
+        outside = self.root.parent / "outside.py"
+        with ScopedAgyPolicy("read_only", self.root) as scoped:
+            scoped.config.write_text(json.dumps({"policy": "read_only", "workspace": str(self.root)}))
+            payload = {"toolCall": {"name": "view_file", "args": {"AbsolutePath": str(outside)}}}
+            result = subprocess.run(scoped.hook_argv, input=json.dumps(payload), text=True,
+                                    capture_output=True, check=True)
+            decision = json.loads(result.stdout)
+            self.assertEqual(decision["decision"], "deny")
+            audit = scoped.decisions()[0]
+            self.assertEqual(audit["target"], str(outside))
+            self.assertEqual(audit["code"], "outside_workspace")
+            self.assertIn("outside", audit["reason"])
 
 
 if __name__ == "__main__":

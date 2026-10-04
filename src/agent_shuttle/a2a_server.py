@@ -7,6 +7,7 @@ import os
 import inspect
 import math
 import uuid
+import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from time import monotonic
@@ -31,7 +32,9 @@ from .backends import (
 from .info import InfoProvider
 from .profiled import ProfiledBackend
 from .profiles import ToolPolicy
+from .structured import encode_output_schema
 from .task_library import TaskManager
+from .runtime_context import NESTED_DISPATCH_ERROR, is_worker_context
 
 
 @dataclass
@@ -215,13 +218,24 @@ class BridgeExecutor(AgentExecutor):
                     new_text_message("session_id must match the A2A context_id"),
                 )
                 return
+        output_schema = None
+        if "agent_shuttle.output_schema" in context.message.metadata:
+            try:
+                raw = context.message.metadata["agent_shuttle.output_schema"]
+                if not isinstance(raw, str):
+                    raise ValueError("output_schema must be a serialized JSON schema")
+                output_schema = json.loads(raw)
+                encode_output_schema(output_schema)
+            except (TypeError, ValueError) as exc:
+                await updater.update_status(TaskState.TASK_STATE_REJECTED, new_text_message(str(exc)))
+                return
         await self._execute_library(task, updater, prompt, model, reasoning_effort,
                                     tool_policy or ("read_only" if read_only else None), session_id,
                                     (context.message.metadata["agent_bridge.request_id"]
-                                     if "agent_bridge.request_id" in context.message.metadata else None))
+                                     if "agent_bridge.request_id" in context.message.metadata else None), output_schema)
 
     async def _execute_library(self, task, updater, prompt, model, reasoning_effort,
-                               tool_policy, session_id, request_id):
+                               tool_policy, session_id, request_id, output_schema=None):
         manager = self.task_manager
         assert manager is not None and self.agent_id is not None
 
@@ -233,10 +247,12 @@ class BridgeExecutor(AgentExecutor):
         try:
             if session_id is not None:
                 await manager.ensure_session(session_id, self.agent_id, model=model,
-                                             reasoning_effort=reasoning_effort, tool_policy=tool_policy)
+                                             reasoning_effort=reasoning_effort, tool_policy=tool_policy,
+                                             output_schema=output_schema)
             core_task = await manager.dispatch(self.agent_id, prompt, model=model,
                                                reasoning_effort=reasoning_effort,
                                                tool_policy=tool_policy, session_id=session_id,
+                                               output_schema=output_schema,
                                                request_id=request_id, task_id=task.id,
                                                event_sink=on_event)
         except Exception as exc:
@@ -252,12 +268,12 @@ class BridgeExecutor(AgentExecutor):
         except asyncio.CancelledError:
             await core_task.cancel()
             raise
+        metadata = {}
+        if result.usage:
+            metadata["agent_bridge.usage"] = result.usage
+        if result.details:
+            metadata["agent_bridge.details"] = result.details
         if result.state == "completed":
-            metadata = {}
-            if result.usage:
-                metadata["agent_bridge.usage"] = result.usage
-            if result.details:
-                metadata["agent_bridge.details"] = result.details
             await updater.add_artifact([new_text_part(result.text, media_type="text/plain")],
                                        name="result", metadata=metadata or None)
             await updater.update_status(TaskState.TASK_STATE_COMPLETED)
@@ -265,7 +281,7 @@ class BridgeExecutor(AgentExecutor):
             error = result.error or {"code": "backend_error", "message": "Unknown worker error"}
             await updater.update_status(TaskState.TASK_STATE_FAILED,
                                         new_text_message(f"{error.get('type', 'Error')}: {error['message']}"),
-                                        metadata={"agent_bridge.error": error})
+                                        metadata={**metadata, "agent_bridge.error": error})
         elif result.state == "canceled":
             await updater.update_status(TaskState.TASK_STATE_CANCELED)
 
@@ -282,10 +298,13 @@ class _IdempotentRequestHandler(DefaultRequestHandler):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._worker_context = is_worker_context()
         self._request_lock = asyncio.Lock()
         self._requests: dict[tuple[str, str], tuple[bytes, asyncio.Task]] = {}
 
     async def on_message_send(self, params, context):
+        if self._worker_context:
+            raise InvalidParamsError(NESTED_DISPATCH_ERROR)
         request_id = (
             params.message.metadata["agent_bridge.request_id"]
             if "agent_bridge.request_id" in params.message.metadata else None
@@ -323,6 +342,11 @@ class _IdempotentRequestHandler(DefaultRequestHandler):
                 self._requests[key] = (fingerprint, submitted)
         # A dropped HTTP caller must not abort the only copy of its task.
         return await asyncio.shield(submitted)
+
+    async def on_cancel_task(self, params, context):
+        if self._worker_context:
+            raise InvalidParamsError(NESTED_DISPATCH_ERROR)
+        return await super().on_cancel_task(params, context)
 
 
 def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider | None = None,
@@ -383,12 +407,15 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                 "antigravity_sdk" if isinstance(backend, AntigravitySdkBackend) else name
             )
             workspace = getattr(backend, "workspace", None)
-        result = {"agent": name, "backend": backend_name, "pid": os.getpid()}
+        result = {"agent": name, "backend": backend_name, "pid": os.getpid(),
+                  "runtime_context": manager.runtime_context,
+                  "dispatch_enabled": manager.runtime_context == "coordinator"}
         database = getattr(handler.task_store, "path", None)
         result["task_storage"] = "sqlite" if isinstance(database, Path) else "memory"
         result["task_db_path"] = str(database) if isinstance(database, Path) else None
         result["supported_tool_policies"] = []
         result["default_tool_policy"] = None
+        result["structured_output"] = isinstance(backend, AntigravityCliBackend)
         if isinstance(backend, ProfiledBackend):
             result["max_tool_policy"] = backend.profile.max_tool_policy.value
             policies = list(ToolPolicy)
@@ -444,6 +471,9 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         return JSONResponse(result)
 
     async def close_session(request):
+        if manager.runtime_context == "worker":
+            return JSONResponse({"error": NESTED_DISPATCH_ERROR,
+                                 "code": "nested_dispatch_disabled"}, status_code=403)
         try:
             session_id = str(uuid.UUID(request.path_params["session_id"]))
         except ValueError:
@@ -456,6 +486,9 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
 
     @asynccontextmanager
     async def lifespan(app):
+        check_ready = getattr(info_provider, "check_ready", None)
+        if check_ready is not None:
+            await check_ready()
         acquire = getattr(handler.task_store, "acquire_owner", None)
         if acquire is not None:
             acquire()
@@ -471,16 +504,17 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                 await recover()
             async with manager:
                 janitor = asyncio.create_task(reap_loop())
-                yield
-        finally:
-            try:
-                if janitor is not None:
+                try:
+                    yield
+                finally:
                     janitor.cancel()
                     try:
                         await janitor
                     except asyncio.CancelledError:
                         pass
-                await handler._active_task_registry.aclose()
+                    await handler._active_task_registry.aclose()
+        finally:
+            try:
                 shutdown = getattr(backend, "close", None)
                 if shutdown is not None:
                     await shutdown()

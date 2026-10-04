@@ -49,6 +49,13 @@ class AntigravityCliInfo:
         self.timeout_seconds = timeout_seconds
         self._read_lock = asyncio.Lock()
 
+    async def check_ready(self) -> None:
+        """Verify the CLI account before the server accepts tasks, without a turn."""
+        data = await self._read("--output-format", "json", "models")
+        models = data.get("models")
+        if not isinstance(models, list) or not models:
+            raise RuntimeError("Antigravity returned an empty or invalid model catalog during startup")
+
     async def _read(self, *args: str) -> dict:
         # Multiple HTTP info requests must not start competing agy processes.
         async with self._read_lock:
