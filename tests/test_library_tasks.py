@@ -100,7 +100,8 @@ class LibraryTasksTests(unittest.IsolatedAsyncioTestCase):
         async with self.manager() as manager:
             task = await manager.dispatch("fake", "wait")
             self.assertIn((await task.wait(0.01)).state, {"submitted", "working"})
-            self.assertEqual((await task.cancel()).state, "canceled")
+            canceled = await task.cancel()
+            self.assertEqual(canceled.state, "canceled", canceled.error)
             self.assertEqual((await task.cancel()).state, "canceled")
 
     async def test_parallel_turns_share_one_native_session_and_cancel_invalidates_it(self):
