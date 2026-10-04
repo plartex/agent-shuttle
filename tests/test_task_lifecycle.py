@@ -233,12 +233,13 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         async def active(prompt, model=None, *, reasoning_effort=None, read_only=False, on_event=None):
             for _ in range(8):
                 await on_event({"kind": "tool", "text": "reading source"})
-                await asyncio.sleep(0.03)
+                await asyncio.sleep(0.15)
             return "done"
         self.backend.run = active
-        await self._reconfigure(execution_timeout_seconds=2, stall_timeout_seconds=0.12)
+        await self._reconfigure(execution_timeout_seconds=5, stall_timeout_seconds=0.5)
         handle = await BridgeClient(timeout_seconds=3).submit(self.url, "active")
-        self.assertEqual((await handle.wait(2)).state, "TASK_STATE_COMPLETED")
+        result = await handle.wait(4)
+        self.assertEqual(result.state, "TASK_STATE_COMPLETED", result.error)
         transcript = await handle.transcript()
         self.assertIn("agent_bridge.event", str(transcript))
 

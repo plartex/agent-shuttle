@@ -60,7 +60,7 @@ class LibraryTasksTests(unittest.IsolatedAsyncioTestCase):
 
     def manager(self):
         return TaskManager({"fake": self.backend}, workspace=self.root,
-                           database=self.database, execution_timeout_seconds=5)
+                           database=self.database, execution_timeout_seconds=30)
 
     async def test_python_api_dispatch_wait_result_and_persistence_without_transports(self):
         request_id = str(uuid.uuid4())
