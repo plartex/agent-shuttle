@@ -10,7 +10,7 @@ This guide walks you through setting up Agent Shuttle, verifying harness availab
 
 Agent Shuttle interacts with local coding harnesses on your workstation. Make sure you have:
 
-- **Python 3.11 or newer** installed and available on `PATH`.
+- **uv** for the recommended MCP/CLI installation below. uv can obtain Python 3.11 or newer automatically; a separate Python installation is needed only for the checkout instructions.
 - For **Codex**:
   - The Codex desktop or CLI app installed and signed in.
   - Python SDK dependency (`openai-codex`) is installed automatically by Agent Shuttle.
@@ -26,7 +26,24 @@ Agent Shuttle interacts with local coding harnesses on your workstation. Make su
 
 ---
 
-## Setup in the Repository Checkout (Windows)
+## Install the MCP server or CLI
+
+On Windows, macOS, or Linux, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and run:
+
+```text
+uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool dir --bin
+```
+
+Agent Shuttle is not on PyPI yet. The last command prints the directory containing `agent-shuttle-mcp` (`agent-shuttle-mcp.exe` on Windows). Configure your MCP client to launch that absolute path, then use its existing `ask_agent` tool. The client starts a temporary local A2A peer when needed. To run `agent-shuttle` directly in a shell, use `uv tool update-shell` if needed and open a new shell.
+
+For Python imports in another uv-managed project, run `uv add git+https://github.com/Plartex/agent-shuttle.git` in that project. A `uv tool install` environment is isolated from project imports. Once a PyPI release is verified, the corresponding commands will be `uv tool install agent-shuttle` and `uv add agent-shuttle`.
+
+You can run `agent-shuttle discover` to diagnose executable discovery, and `agent-shuttle doctor <agent> --smoke` to verify a model turn after signing in. Neither is required to install the package.
+
+---
+
+## Setup in the Repository Checkout (Windows, for development)
 
 If you are developing or running Agent Shuttle directly from a git clone:
 
@@ -50,7 +67,7 @@ Antigravity Desktop may read `%USERPROFILE%\.gemini\config\mcp_config.json` inst
 
 ---
 
-## Using Agent Shuttle as a Dependency in Another Project
+## Installing from a local checkout into another project
 
 You can install Agent Shuttle into any other Python project without keeping the source checkout active.
 
