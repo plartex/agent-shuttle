@@ -28,7 +28,7 @@ class TaskRestartTests(unittest.IsolatedAsyncioTestCase):
             first.workspace = second.workspace = Path(folder)
             saved_id = None
             for index, backend in enumerate((first, second)):
-                server = uvicorn.Server(uvicorn.Config(make_app("slow", backend, url, task_store=SQLiteTaskStore(path)),
+                server = uvicorn.Server(uvicorn.Config(make_app("slow", backend, url, task_store=SQLiteTaskStore(path), publish_credential=True),
                                                        host="127.0.0.1", port=port, log_level="error"))
                 running = asyncio.create_task(server.serve())
                 while not server.started:

@@ -1,0 +1,8 @@
+{
+  "id": "my-acp",
+  "runtime": "acp",
+  "workspace": "..",
+  "command": ["my-agent", "acp"],
+  "max_tool_policy": "full_access",
+  "default_tool_policy": "full_access"
+}

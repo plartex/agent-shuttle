@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,21 @@ from agent_shuttle.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_discover_acp_profile_checks_command_without_starting_agent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            profile = Path(folder) / "acp.json"
+            profile.write_text(json.dumps({
+                "id": "configured", "runtime": "acp", "workspace": folder,
+                "command": [sys.executable, "-c", "raise AssertionError('started')"],
+            }), encoding="utf-8")
+            with patch("sys.argv", ["agent-shuttle", "discover", "--profile", str(profile)]), \
+                 patch("agent_shuttle.cli.discover_harnesses", return_value={}), \
+                 patch("builtins.print") as output:
+                main()
+            discovered = json.loads(output.call_args.args[0])["configured"]
+            self.assertTrue(discovered["command_found"])
+            self.assertEqual(discovered["protocol"], "acp")
+
     def test_discover_uses_manual_override_without_starting_server(self):
         with patch("sys.argv", ["agent-shuttle", "discover", "--opencode-command", "C:/tools/opencode.exe"]), \
              patch("agent_shuttle.cli.discover_harnesses", return_value={"opencode": "C:/tools/opencode.exe"}) as discover, \
@@ -25,10 +41,9 @@ class CliTests(unittest.TestCase):
                 "workspace": ".", "default_model": "test", "allowed_models": ["test"],
             }), encoding="utf-8")
             with patch("sys.argv", ["agent-shuttle", "serve", "profile", "--profile", str(profile), "--port", "8767"]), \
-                 patch("agent_shuttle.cli.uvicorn.run") as run:
+                 patch("agent_shuttle.cli._run_server") as run:
                 main()
-            self.assertEqual(run.call_args.kwargs["port"], 8767)
-            self.assertEqual(run.call_args.kwargs["host"], "127.0.0.1")
+            self.assertEqual(run.call_args.args[1], 8767)
             paths = {route.path for route in run.call_args.args[0].routes}
             self.assertIn("/bridge/info", paths)
             self.assertIn("/bridge/identity", paths)
@@ -52,7 +67,7 @@ class CliTests(unittest.TestCase):
             with patch("sys.argv", ["agent-shuttle", "serve", "profile", "--profile",
                                     str(profile_path), "--workspace", str(project), "--port", "8768"]), \
                  patch("agent_shuttle.cli.build_profile") as build, \
-                 patch("agent_shuttle.cli.uvicorn.run"):
+                 patch("agent_shuttle.cli._run_server"):
                 build.return_value = (object(), object())
                 main()
             self.assertEqual(build.call_args.args[0].workspace, project.resolve())
@@ -83,9 +98,9 @@ class CliTests(unittest.TestCase):
             with self.subTest(agent=agent, extra=extra), tempfile.TemporaryDirectory() as folder, \
                  patch("sys.argv", ["agent-shuttle", "serve", agent,
                                     "--workspace", folder, "--port", "8765", *extra]), \
-                 patch("agent_shuttle.cli.uvicorn.run") as run:
+                 patch("agent_shuttle.cli._run_server") as run:
                 main()
-                self.assertEqual(run.call_args.kwargs["port"], 8765)
+                self.assertEqual(run.call_args.args[1], 8765)
         with patch("sys.argv", ["agent-shuttle", "serve", "codex", "--port", "8765",
                                 "--profile", "profile.json"]):
             with self.assertRaises(SystemExit):
@@ -95,8 +110,8 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, \
              patch("sys.argv", ["agent-shuttle", "serve", "antigravity", "--port", "8766",
                                 "--workspace", folder, "--agy-dangerously-skip-permissions"]), \
-             patch("agent_shuttle.cli.AntigravityCliBackend") as backend, \
-             patch("agent_shuttle.cli.uvicorn.run") as run:
+             patch("agent_shuttle.registry.AntigravityCliBackend") as backend, \
+             patch("agent_shuttle.cli._run_server") as run:
             main()
         self.assertTrue(run.call_args.args[0].routes)
         self.assertTrue(backend.call_args.kwargs["dangerously_skip_permissions"])
@@ -105,8 +120,8 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, \
              patch("sys.argv", ["agent-shuttle", "serve", "antigravity", "--port", "8766",
                                 "--workspace", folder, "--agy-turn-timeout-seconds", "42"]), \
-             patch("agent_shuttle.cli.AntigravityCliBackend") as backend, \
-             patch("agent_shuttle.cli.uvicorn.run"):
+             patch("agent_shuttle.registry.AntigravityCliBackend") as backend, \
+             patch("agent_shuttle.cli._run_server"):
             main()
         self.assertEqual(backend.call_args.kwargs["turn_timeout_seconds"], 42)
 

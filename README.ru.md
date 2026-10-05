@@ -8,9 +8,9 @@
 
 [English version / Английская версия](README.md)
 
-Agent Shuttle даёт Python-приложениям единый способ работать с **Codex**, **Antigravity**, **OpenCode** и **Claude Code**. Библиотека запускает локальные задачи агентов, сохраняет многошаговые сессии и предоставляет доступ через [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) и [MCP](https://modelcontextprotocol.io/).
+Agent Shuttle даёт Python-приложениям единый способ работать с **Codex**, **Antigravity**, **OpenCode**, **Claude Code** и агентами **ACP из профилей**. Библиотека запускает локальные задачи агентов, сохраняет многошаговые сессии и предоставляет доступ через [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) и [MCP](https://modelcontextprotocol.io/).
 
-Библиотека позволяет агентам и внешним программам делегировать задачи агентам-партнерам, повторно использовать контекст многошаговых бесед, запрашивать актуальные каталоги моделей и квоты аккаунтов, а также разграничивать политики доступа к инструментам — исключительно на локальном интерфейсе (`127.0.0.1`) без передачи облачных API-ключей.
+Библиотека позволяет агентам и внешним программам делегировать задачи агентам-партнерам, повторно использовать контекст многошаговых бесед, запрашивать актуальные каталоги моделей и квоты аккаунтов, а также видеть гарантии политик доступа каждого runtime — исключительно на локальном интерфейсе (`127.0.0.1`) без передачи облачных API-ключей.
 
 ---
 
@@ -22,6 +22,7 @@ Agent Shuttle даёт Python-приложениям единый способ �
 | **Antigravity** | Официальный CLI `agy` в headless-режиме (`-p` / `stream-json`) | Авторизованный аккаунт Antigravity | Считывание моделей, усилий и квот `/usage` в реальном времени. Режим стандартных настроек либо полный доступ (`--dangerously-skip-permissions`). Опциональный устаревший SDK backend. |
 | **OpenCode** | Управляемый локальный HTTP-сервер (`--pure serve`) | Локальная Ollama или сторонние провайдеры | Настройка через JSON-профиль, гранулярные политики инструментов (`no_tools`, `read_only`, `workspace_write`, `full_access`), варианты моделей. |
 | **Claude Code** | Управляемый CLI в print-режиме (`claude -p`) | Локальный endpoint Ollama или Anthropic | Настройка через JSON-профиль, изолированные временные конфигурации сессий, возобновление диалога, безопасный режим против полного доступа. |
+| **Агент ACP из профиля** | Agent Client Protocol через локальный stdio | Учётная запись и настройки самого агента | Регистрация команды в JSON-профиле, поток событий, отмена и возобновление сессий при объявленной возможности `session/load`. Политики доступа имеют рекомендательный характер. |
 
 ---
 
@@ -129,13 +130,20 @@ asyncio.run(main())
 # Поиск локально установленных харнессов без запуска моделей
 agent-shuttle discover
 
+# Проверка установки и подключения без хода модели
+agent-shuttle doctor
+agent-shuttle doctor --profile .\examples\opencode-ollama.json
+
+# После исправления ошибки — один пробный ход с расходом токенов
+agent-shuttle doctor codex --smoke
+
 # Запуск A2A-сервера для Codex
 agent-shuttle serve codex --workspace . --port 8765
 
 # Запуск A2A-сервера для Antigravity (в режиме CLI)
 agent-shuttle serve antigravity --workspace . --port 8766
 
-# Запуск A2A-сервера из профиля (OpenCode или Claude Code)
+# Запуск A2A-сервера из профиля (OpenCode, Claude Code или ACP)
 agent-shuttle serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
 
 # Запрос возможностей сервера, каталога моделей и лимитов квот
@@ -144,6 +152,23 @@ agent-shuttle info http://127.0.0.1:8765
 # Отправка задачи из командной строки
 agent-shuttle ask http://127.0.0.1:8765 "Сделай краткое резюме последних изменений" --model gpt-5.6-terra
 ```
+
+`doctor` отдельно показывает проверку установки, подключения и реального хода. Без аргументов он проверяет встроенные агенты и локальные профили из `BRIDGE_AGENTS_JSON`; отсутствующие необязательные агенты пропускаются. Для проверки подключения OpenCode и Claude Code нужен JSON-профиль. `--json` выводит те же данные для скриптов. Коды выхода: `0` — обязательные проверки прошли, `1` — цель или пробный ход не прошли, `2` — неверные аргументы или конфигурация. `--smoke` требует одну цель и использует обеспеченный `no_tools` (для Codex — `read_only`). ACP-проба отклоняется, поскольку ACP не гарантирует эти ограничения.
+
+### Регистрация агента ACP
+
+Скопируйте [`examples/acp-worker.json`](examples/acp-worker.json), укажите команду запуска установленного агента в массиве `command` и рабочую папку `workspace`. Оболочка для запуска команды не используется. Поля `provider`, `default_model`, `allowed_models` и `reasoning_efforts` необязательны. Без списков разрешённых вариантов можно явно выбрать любую модель или усилие, объявленные агентом в ACP config options; заданные списки сужают этот выбор.
+
+```powershell
+agent-shuttle discover --profile .\examples\acp-worker.json
+agent-shuttle serve profile --profile .\examples\acp-worker.json --port 8768
+agent-shuttle info http://127.0.0.1:8768
+agent-shuttle ask http://127.0.0.1:8768 "Объясни этот проект" --tool-policy read_only
+```
+
+Для управляемого запуска через MCP можно связать произвольный `agent_id` с профилем через `BRIDGE_AGENTS_JSON`: `{"my-acp": {"harness": "acp", "profile": "C:/profiles/my-acp.json"}}`.
+
+`discover` проверяет команду без запуска агента. `info` выполняет ACP handshake и показывает объявленные возможности без модельного запроса. Для ACP политики доступа **не гарантируются**: результат содержит предупреждение, а `read_only_tools` остаётся `false`. При необходимости строгих ограничений используйте отдельно проверенную изоляцию.
 
 ### 3. Model Context Protocol (MCP)
 
@@ -154,7 +179,7 @@ agent-shuttle-mcp
 ```
 
 Доступные инструменты MCP:
-- `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`: Использует подходящий локальный A2A-сервер или временно запускает его. Встроенные идентификаторы: `codex`, `antigravity`, `opencode`, `claude_code`; последним двум нужен профиль или модель Ollama.
+- `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`: Использует подходящий локальный A2A-сервер или временно запускает его. Встроенные идентификаторы: `codex`, `antigravity`, `opencode`, `claude_code`; настраиваемым ACP-агентам нужен JSON-профиль в `BRIDGE_AGENTS_JSON`.
 - `get_agent_info(agent_id, workspace?)`: Возвращает модели и квоты, при необходимости запуская временный сервер.
 - `ask_antigravity(prompt, model?, reasoning_effort?, workspace?, tool_policy?, turn_timeout_seconds=300)`: При необходимости запускает сервер Antigravity.
 - `ask_codex(prompt, model?, reasoning_effort?, workspace?)`: При необходимости запускает сервер Codex.
@@ -187,6 +212,8 @@ Agent Shuttle определяет четыре стандартные поли�
 - `workspace_write`: Разрешена модификация файлов внутри рабочего каталога.
 - `full_access`: Явное снятие всех ограничений инструментов и запросов подтверждения.
 
+Для агентов ACP из профилей эти политики носят рекомендательный характер. Agent Shuttle проверяет запросы разрешений ACP, но не может запретить агенту действия вне таких запросов. Подробнее — в [руководстве по правам](docs/ru/permissions.md#5-агент-acp-из-профиля).
+
 > [!WARNING]
 > `full_access` даёт агенту неограниченный доступ к инструментам для конкретной задачи. Флаг `--agy-dangerously-skip-permissions` делает этот режим доступным на сервере Antigravity. Оставляйте серверы на loopback. Явная политика `read_only` в Antigravity применяется через проверенный хук `PreToolUse`; политика CLI по умолчанию не даёт такой гарантии.
 
@@ -196,11 +223,13 @@ Agent Shuttle определяет четыре стандартные поли�
 
 Agent Shuttle содержит полный набор офлайн-тестов на базе имитационных (fake) бэкендов, не требующих доступа к сети, учетных записей или расхода квот:
 
+GitHub Actions запускает один и тот же набор на Windows, Ubuntu Linux и macOS с Apple Silicon (`macos-15`) для Python 3.11 и 3.12. Процессный smoke использует только локальный Python worker и проверяет очистку дерева процессов; агентские CLI и учётные записи не нужны.
+
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-Интеграционные тесты с реальными моделями запускаются выборочно при наличии соответствующего окружения (например, `BRIDGE_LIVE_OLLAMA_MODEL=qwen3.5:9b` или `BRIDGE_LIVE_AGY_FULL_ACCESS=1`). Подробные инструкции приведены в [CONTRIBUTING.ru.md](CONTRIBUTING.ru.md).
+Интеграционные тесты с реальными моделями остаются отдельными проверками по запросу и не входят в шесть заданий CI. Они запускаются при наличии соответствующего окружения (например, `BRIDGE_LIVE_OLLAMA_MODEL=qwen3.5:9b` или `BRIDGE_LIVE_AGY_FULL_ACCESS=1`). Подробные инструкции приведены в [CONTRIBUTING.ru.md](CONTRIBUTING.ru.md).
 
 ---
 

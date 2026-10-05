@@ -72,6 +72,36 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(launch.profile_path, Path("profiles/opencode.json"))
         self.assertEqual(launch.url, "http://127.0.0.1:8767")
 
+    async def test_custom_acp_profile_can_infer_harness(self):
+        mapping = {"my_agent": {"profile": "profiles/acp.json"}}
+        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": json.dumps(mapping)}, clear=True):
+            launch = _agent_launch("my_agent", tool_policy="read_only")
+        self.assertEqual(launch.name, "acp")
+        self.assertEqual(launch.profile_path, Path("profiles/acp.json"))
+        self.assertEqual(launch.tool_policy, "read_only")
+
+    async def test_custom_acp_warning_reaches_mcp_result(self):
+        mapping = {"my_agent": {"profile": "profiles/acp.json"}}
+        launches = []
+
+        @asynccontextmanager
+        async def connected(launch):
+            launches.append(launch)
+            yield SimpleNamespace(url=launch.url)
+
+        result = SimpleNamespace(task_id="1", context_id=None,
+                                 state="TASK_STATE_COMPLETED", text="done", usage=None,
+                                 details={"tool_policy_enforcement": "advisory",
+                                          "warnings": ["ACP policy is advisory"]})
+        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": json.dumps(mapping)}, clear=True), \
+             patch("agent_shuttle.mcp_server.connect_harness", connected), \
+             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+                   return_value=result):
+            answer = await ask_agent("my_agent", "task", tool_policy="read_only")
+        self.assertEqual(launches[0].name, "acp")
+        self.assertEqual(answer["details"]["tool_policy_enforcement"], "advisory")
+        self.assertEqual(answer["details"]["warnings"], ["ACP policy is advisory"])
+
     async def test_registry_rejects_untrusted_urls_and_names(self):
         mapping = {"remote": {"harness": "codex", "url": "https://example.com"}}
         with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": json.dumps(mapping)}, clear=True):

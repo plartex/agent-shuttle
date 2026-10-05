@@ -42,7 +42,9 @@ class WorkerLifecycleService:
 
     def _resumable_agents(self) -> set[str]:
         return {name for name, backend in self.backends.items()
-                if callable(getattr(backend, "resume_session", None))}
+                if callable(getattr(backend, "resume_session", None))
+                and (getattr(backend, "can_attempt_resume_after_restart", False)
+                     or getattr(backend, "supports_resume_after_restart", True))}
 
     def recover(self) -> None:
         self.repository.recover_interrupted(self._resumable_agents())
@@ -125,7 +127,10 @@ class WorkerLifecycleService:
                             opened = await backend.open_session(row["model"], **kwargs)
                         native = _NativeSession(opened)
                         self._native_sessions[session_id] = native
-                        self.repository.set_session_state(session_id, "open", getattr(opened, "native_id", None))
+                        self.repository.set_session_state(
+                            session_id, "open", getattr(opened, "native_id", None),
+                            resume_supported=getattr(opened, "supports_resume", True),
+                        )
                     if "on_event" in inspect.signature(native.session.ask).parameters:
                         return await native.session.ask(row["prompt"], on_event=on_event)
                     return await native.session.ask(row["prompt"])

@@ -64,7 +64,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.url = f"http://127.0.0.1:{port}"
         self.backend = SlowBackend()
         self.backend.workspace = Path(self.temporary.name)
-        self.app = make_app("slow", self.backend, self.url)
+        self.app = make_app("slow", self.backend, self.url, publish_credential=True)
         self.server = uvicorn.Server(uvicorn.Config(
             self.app,
             host="127.0.0.1", port=port, log_level="error",
@@ -195,7 +195,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.server.should_exit = True
         await self.running
         port = int(self.url.rsplit(":", 1)[1])
-        self.app = make_app("slow", self.backend, self.url, **options)
+        self.app = make_app("slow", self.backend, self.url, publish_credential=True, **options)
         self.server = uvicorn.Server(uvicorn.Config(
             self.app,
             host="127.0.0.1", port=port, log_level="error",

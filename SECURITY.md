@@ -6,11 +6,12 @@ This document outlines the security architecture, trust boundaries, known operat
 
 ---
 
-## Localhost Binding & Lack of Network Authentication
+## Localhost Binding & Authentication
 
 - **Loopback Only:** Agent Shuttle servers bind strictly to `127.0.0.1` (loopback).
-- **No Network Authentication:** The A2A HTTP endpoints (`/`, `/bridge/*`) have **no built-in authentication or encryption**. Any process or local user running on the same host can connect to an open Bridge port and submit tasks or inspect live account quota data.
-- **Do Not Expose Externally:** Never bind Agent Shuttle ports to `0.0.0.0` or expose them over a local network or the internet without placing them behind a reverse proxy (e.g. Nginx, Caddy) that enforces TLS termination and strong authentication.
+- **Bearer by default:** Each server start creates a fresh local Bearer credential. All task and `/bridge/*` endpoints require it; only the public Agent Card and `/bridge/proof` are unauthenticated. The server also checks the exact `Host` and rejects requests with an `Origin` header.
+- **Credential location:** The per-port record is outside the project, under `%LOCALAPPDATA%\AgentShuttle\run` on Windows and `$XDG_RUNTIME_DIR/agent-shuttle` or `~/.local/state/agent-shuttle/run` on POSIX. The directory and file are restricted to the current OS user. Python and CLI clients discover it automatically and verify a nonce proof before sending Bearer. Other A2A clients can read the record as that user and send standard HTTP Bearer.
+- **Trust boundary:** This protects against other OS users and requests from websites. A process under the same user account can read the record and is outside this boundary. Remote access needs a separate TLS and credential architecture; keep the server bound to `127.0.0.1`.
 
 ---
 

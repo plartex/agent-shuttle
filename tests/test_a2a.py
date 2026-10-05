@@ -93,18 +93,24 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 "workspace": folder, "default_model": "test", "allowed_models": ["test"],
                 "max_tool_policy": "read_only", "default_tool_policy": "read_only",
             })
+            acp_profile = AgentProfile.from_mapping({
+                "id": "acp-local", "runtime": "acp", "workspace": folder,
+                "command": ["agent", "acp"], "max_tool_policy": "read_only",
+            })
             cases = (
                 (CodexBackend(root), ["read_only", "workspace_write", "full_access"], "workspace_write"),
                 (AntigravityCliBackend(root), ["no_tools", "read_only", "workspace_write"], None),
                 (AntigravityCliBackend(root, dangerously_skip_permissions=True),
                  ["no_tools", "read_only", "workspace_write", "full_access"], "full_access"),
                 (ProfiledBackend(profile, object()), ["no_tools", "read_only"], "read_only"),
+                (ProfiledBackend(acp_profile, object()), [], "read_only"),
             )
             for backend, policies, default in cases:
                 with self.subTest(backend=type(backend).__name__, policies=policies):
                     app = make_app("test", backend, "http://127.0.0.1:8765")
                     async with httpx.AsyncClient(
-                        transport=httpx.ASGITransport(app=app), base_url="http://test",
+                        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765",
+                        headers={"Authorization": "Bearer " + app.state.local_credential.token},
                     ) as http:
                         result = (await http.get("/bridge/identity")).json()
                     self.assertEqual(result["supported_tool_policies"], policies)
@@ -113,6 +119,10 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                         self.assertIn("auto-approves all tools", result["tool_policy_notes"])
                     if isinstance(backend, AntigravityCliBackend):
                         self.assertEqual(result["tool_policy_enforcement"], "agy_pre_tool_use")
+                    if isinstance(backend, ProfiledBackend) and backend.profile.runtime == "acp":
+                        self.assertEqual(result["advisory_tool_policies"], ["no_tools", "read_only"])
+                        self.assertEqual(result["tool_policy_enforcement"], "advisory")
+                        self.assertFalse(result["read_only_tools"])
 
     async def test_old_peer_without_identity_requires_restart(self):
         request = httpx.Request("GET", "http://127.0.0.1:8766/bridge/identity")
@@ -140,7 +150,8 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             )
             app = make_app("antigravity", backend, "http://127.0.0.1:8766", info)
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test",
+                transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8766",
+                headers={"Authorization": "Bearer " + app.state.local_credential.token},
             ) as http:
                 response = await http.get("/bridge/identity")
             self.assertEqual(response.status_code, 200)
@@ -165,7 +176,8 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             ):
                 app = make_app("test", backend, "http://127.0.0.1:8765", EchoInfo())
                 async with httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=app), base_url="http://test"
+                    transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765",
+                    headers={"Authorization": "Bearer " + app.state.local_credential.token},
                 ) as http:
                     response = await http.get("/bridge/capabilities")
                 self.assertEqual(response.status_code, 200)
@@ -180,7 +192,8 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 "http://127.0.0.1:8766", EchoInfo(),
             )
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test",
+                transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8766",
+                headers={"Authorization": "Bearer " + app.state.local_credential.token},
             ) as http:
                 response = await http.get("/bridge/capabilities")
             self.assertEqual(response.json()["agy_permission_mode"], "all")
@@ -195,7 +208,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             port = listener.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
         server = uvicorn.Server(uvicorn.Config(
-            make_app("antigravity", DeniedBackend(), url),
+            make_app("antigravity", DeniedBackend(), url, publish_credential=True),
             host="127.0.0.1", port=port, log_level="error",
         ))
         running = asyncio.create_task(server.serve())
@@ -223,7 +236,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
-        app = make_app("echo", EchoBackend(), url)
+        app = make_app("echo", EchoBackend(), url, publish_credential=True)
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
         running = asyncio.create_task(server.serve())
         try:
@@ -237,6 +250,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0.03)
                 else:
                     self.fail("A2A server did not start")
+                http.headers["Authorization"] = "Bearer " + app.state.local_credential.token
                 self.assertEqual((await http.get(url + "/bridge/info")).status_code, 503)
                 self.assertEqual((await http.delete(url + "/bridge/sessions/not-a-uuid")).status_code, 400)
                 client = await create_client(url, ClientConfig(streaming=False, httpx_client=http))
@@ -277,7 +291,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
         url = f"http://127.0.0.1:{port}"
         backend = PolicyEchoBackend()
         server = uvicorn.Server(uvicorn.Config(
-            make_app("policy", backend, url), host="127.0.0.1", port=port, log_level="error"
+            make_app("policy", backend, url, publish_credential=True), host="127.0.0.1", port=port, log_level="error"
         ))
         running = asyncio.create_task(server.serve())
         try:
@@ -306,7 +320,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             port = listener.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
         backend = EchoBackend()
-        app = make_app("codex", backend, url, EchoInfo())
+        app = make_app("codex", backend, url, EchoInfo(), publish_credential=True)
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
         running = asyncio.create_task(server.serve())
         try:

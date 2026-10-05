@@ -30,7 +30,7 @@ _POLICY_RANK = {
 
 @dataclass(frozen=True)
 class ProfileSelection:
-    model: str
+    model: str | None
     reasoning_effort: str | None
     tool_policy: ToolPolicy
 
@@ -39,10 +39,10 @@ class ProfileSelection:
 class AgentProfile:
     id: str
     runtime: str
-    provider: str
+    provider: str | None
     workspace: Path
     endpoint: str | None
-    default_model: str
+    default_model: str | None
     allowed_models: tuple[str, ...]
     max_tool_policy: ToolPolicy
     default_tool_policy: ToolPolicy = ToolPolicy.NO_TOOLS
@@ -51,6 +51,7 @@ class AgentProfile:
     runtime_command: str | None = None
     credential_env: str | None = None
     turn_timeout_seconds: float = 1800
+    command: tuple[str, ...] = ()
 
     @classmethod
     def from_file(
@@ -73,16 +74,27 @@ class AgentProfile:
         unknown = set(data) - fields
         if unknown:
             raise ValueError(f"Unknown agent profile fields: {', '.join(sorted(unknown))}")
-        required = {"id", "runtime", "provider", "workspace", "default_model", "allowed_models"}
+        runtime = data.get("runtime")
+        required = ({"id", "runtime", "workspace"} if runtime == "acp" else
+                    {"id", "runtime", "provider", "workspace", "default_model", "allowed_models"})
         missing = required - set(data)
         if missing:
             raise ValueError(f"Missing agent profile fields: {', '.join(sorted(missing))}")
-        runtime = data["runtime"]
-        if runtime not in {"opencode", "claude_code"}:
-            raise ValueError("runtime must be opencode or claude_code")
-        provider = data["provider"]
-        if not isinstance(provider, str) or not provider or "/" in provider:
+        if runtime not in {"opencode", "claude_code", "acp"}:
+            raise ValueError("runtime must be opencode, claude_code or acp")
+        provider = data.get("provider")
+        if runtime != "acp" and (not isinstance(provider, str) or not provider or "/" in provider):
             raise ValueError("provider must be a nonempty provider ID")
+        if provider is not None and (not isinstance(provider, str) or not provider or "/" in provider):
+            raise ValueError("provider must be a nonempty provider ID")
+        command = data.get("command", [])
+        if runtime == "acp":
+            if not isinstance(command, list) or not command or any(
+                not isinstance(part, str) or not part.strip() for part in command
+            ):
+                raise ValueError("ACP command must be a nonempty array of strings")
+        elif command:
+            raise ValueError("command is only valid for ACP profiles")
         try:
             workspace = Path(data["workspace"]).resolve(strict=True)
         except (FileNotFoundError, TypeError, ValueError) as exc:
@@ -97,18 +109,21 @@ class AgentProfile:
                 raise ValueError("Local Ollama endpoint must use HTTP loopback")
         elif endpoint is not None and urlparse(endpoint).scheme != "https":
             raise ValueError("Cloud provider endpoint must use HTTPS")
-        allowed = data["allowed_models"]
-        if not isinstance(allowed, list) or not allowed or any(
+        allowed = data.get("allowed_models", [])
+        if not isinstance(allowed, list) or (not allowed and runtime != "acp") or any(
             not isinstance(item, str) or not item.strip() for item in allowed
         ):
-            raise ValueError("allowed_models must be a nonempty list of model IDs")
+            raise ValueError("allowed_models must be a list of model IDs")
         allowed = tuple(dict.fromkeys(allowed))
-        default_model = data["default_model"]
-        if default_model not in allowed:
+        default_model = data.get("default_model")
+        if default_model is not None and allowed and default_model not in allowed:
             raise ValueError("default_model must occur in allowed_models")
         try:
-            maximum = ToolPolicy(data.get("max_tool_policy", "no_tools"))
-            default = ToolPolicy(data.get("default_tool_policy", "no_tools"))
+            policy_default = "full_access" if runtime == "acp" else "no_tools"
+            maximum = ToolPolicy(data.get("max_tool_policy", policy_default))
+            default = ToolPolicy(data.get(
+                "default_tool_policy", maximum.value if runtime == "acp" else policy_default
+            ))
         except ValueError as exc:
             raise ValueError("Unknown tool policy") from exc
         if _POLICY_RANK[default] > _POLICY_RANK[maximum]:
@@ -134,6 +149,7 @@ class AgentProfile:
             reasoning_efforts=tuple(dict.fromkeys(efforts)),
             runtime_url=data.get("runtime_url"), runtime_command=data.get("runtime_command"),
             credential_env=data.get("credential_env"), turn_timeout_seconds=float(timeout),
+            command=tuple(command),
         )
 
     def resolve(
@@ -147,9 +163,11 @@ class AgentProfile:
             provider, selected = selected.split("/", 1)
             if provider != self.provider:
                 raise ValueError(f"Model provider {provider!r} does not match profile provider {self.provider!r}")
-        if selected not in self.allowed_models:
+        if (selected is not None and selected not in self.allowed_models
+                and (self.runtime != "acp" or self.allowed_models)):
             raise ValueError(f"Model {selected!r} is not allowed by profile {self.id!r}")
-        if reasoning_effort is not None and reasoning_effort not in self.reasoning_efforts:
+        if (reasoning_effort is not None and reasoning_effort not in self.reasoning_efforts
+                and (self.runtime != "acp" or self.reasoning_efforts)):
             raise ValueError(f"Unsupported reasoning effort {reasoning_effort!r} for profile {self.id!r}")
         try:
             policy = ToolPolicy(tool_policy) if tool_policy is not None else self.default_tool_policy

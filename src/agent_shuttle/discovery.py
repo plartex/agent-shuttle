@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -38,15 +39,22 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
             found = str(Path(command).resolve())
         if found is None and name not in overrides and not environment_command:
             home = Path.home()
-            candidates = {
-                "antigravity": [home / ".local" / "bin" / "agy.exe",
-                                Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe",
-                                Path(__file__).resolve().parents[2] / "bin" / "agy.exe"],
-                "opencode": [Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" /
-                             "opencode-ai" / "bin" / "opencode.exe",
-                             home / ".local" / "bin" / "opencode.exe"],
-                "claude_code": [home / ".local" / "bin" / "claude.exe"],
-            }[name]
+            if os.name == "nt":
+                candidates = {
+                    "antigravity": [home / ".local" / "bin" / "agy.exe",
+                                    Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe",
+                                    Path(__file__).resolve().parents[2] / "bin" / "agy.exe"],
+                    "opencode": [Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" /
+                                 "opencode-ai" / "bin" / "opencode.exe",
+                                 home / ".local" / "bin" / "opencode.exe"],
+                    "claude_code": [home / ".local" / "bin" / "claude.exe"],
+                }[name]
+            else:
+                executable = {"antigravity": "agy", "opencode": "opencode", "claude_code": "claude"}[name]
+                candidates = [home / ".local" / "bin" / executable]
+                if sys.platform == "darwin":
+                    candidates.extend(Path(prefix) / "bin" / executable
+                                      for prefix in ("/opt/homebrew", "/usr/local"))
             found = next((str(path) for path in candidates if _is_file(path)), None)
         if found is not None:
             result[name] = found

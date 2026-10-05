@@ -75,11 +75,17 @@ Claude Code is managed in print mode (`claude -p`) with isolated temporary confi
 - **`workspace_write`**: Runs in normal mode within the specified project workspace directory.
 - **`full_access`**: Runs with `--dangerously-skip-permissions`.
 
+### 5. Configured ACP agent
+
+ACP defines sessions, prompts, updates, cancellation, and client permission requests. It does **not** define an enforceable filesystem or tool sandbox. Agent Shuttle responds to ACP permission requests according to the selected policy: it denies requests for `no_tools` and `read_only`, and for `workspace_write` it accepts only requests whose reported locations are inside the workspace. An ACP agent may perform operations without sending permission requests, so these checks cannot enforce the requested boundary.
+
+For ACP, `supported_tool_policies` is empty and `advisory_tool_policies` lists the policies accepted by the profile. `/bridge/identity` and `get_agent_info` report `tool_policy_enforcement: "advisory"`; task results contain a warning. `read_only_tools` is always false. `max_tool_policy` limits what callers can request but does not create a sandbox. Use external, verified isolation when the task requires an enforceable restriction.
+
 ---
 
 ## Server-Owned Profiles & Privilege Escalation Prevention
 
-For OpenCode and Claude Code, security policies are governed by server-owned JSON profiles (`AgentProfile`).
+For OpenCode, Claude Code, and ACP, requested policies are bounded by server-owned JSON profiles (`AgentProfile`). For ACP this is only an admission limit, not enforcement of a policy.
 
 Each profile specifies a `max_tool_policy`:
 ```json

@@ -62,7 +62,9 @@ mcp = FastMCP(
         "generation when supported. Full_access requires authorization for unrestricted tools. "
         "Choose the workspace and least sufficient enforceable tool policy for the delegated task. "
         "Use get_agent_info to inspect supported_tool_policies, default_tool_policy and "
-        "tool_policy_notes before choosing a policy. Never substitute full_access for an "
+        "tool_policy_notes before choosing a policy. ACP profiles report advisory_tool_policies "
+        "separately: these are accepted but cannot guarantee read_only or workspace_write. "
+        "Never substitute full_access for an "
         "unsupported restrictive policy. Built-in Codex/Antigravity MCP calls default to "
         "read_only; configured profiles use their own defaults. Inspect each default before use. "
         "Use ask_agent for Codex, Antigravity, OpenCode, Claude Code, or configured profiles. "
@@ -133,15 +135,18 @@ def _agent_launch(agent_id: str, workspace: str | None = None,
         entry = {"url": entry}
     if not isinstance(entry, dict):
         raise ValueError("Agent configuration must be an object or local URL")
-    name = entry.get("harness", agent_id)
-    if name not in {"codex", "antigravity", "opencode", "claude_code"}:
+    profile = entry.get("profile")
+    name = entry.get("harness", "acp" if profile and agent_id not in
+                     {"codex", "antigravity", "opencode", "claude_code"} else agent_id)
+    if name not in {"codex", "antigravity", "opencode", "claude_code", "acp"}:
         raise ValueError(f"Configure harness for agent profile {agent_id!r} in BRIDGE_AGENTS_JSON")
     default_url = os.environ.get(f"BRIDGE_{name.upper()}_URL") if agent_id == name else None
     url = _local_url(entry.get("url") or default_url or _free_local_url())
     root = _workspace(workspace or entry.get("workspace") or os.environ.get(f"BRIDGE_{name.upper()}_WORKSPACE"))
-    profile = entry.get("profile")
     if profile is not None and (not isinstance(profile, str) or not profile):
         raise ValueError("Agent profile must be a nonempty path")
+    if name == "acp" and not profile:
+        raise ValueError("ACP agent requires a JSON profile path")
     return HarnessLaunch(
         name, url, root, model=model,
         profile_path=Path(profile) if profile else None,

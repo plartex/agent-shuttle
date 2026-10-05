@@ -158,6 +158,30 @@ class AgentProfileTests(unittest.TestCase):
                 self.assertEqual(profile.resolve(None, None, "read_only").tool_policy,
                                  ToolPolicy.READ_ONLY)
 
+    def test_acp_profile_accepts_command_without_model_and_bounds_advisory_policy(self):
+        profile = AgentProfile.from_mapping({
+            "id": "acp-local", "runtime": "acp", "workspace": str(self.workspace),
+            "command": ["agent", "acp"], "max_tool_policy": "read_only",
+        })
+        self.assertEqual(profile.command, ("agent", "acp"))
+        self.assertIsNone(profile.resolve(None, None, None).model)
+        self.assertEqual(profile.resolve(None, None, None).tool_policy, ToolPolicy.READ_ONLY)
+        self.assertEqual(profile.resolve("small", "high", None).model, "small")
+        self.assertEqual(profile.resolve("small", "high", None).reasoning_effort, "high")
+        defaulted = AgentProfile.from_mapping({
+            "id": "acp-default", "runtime": "acp", "workspace": str(self.workspace),
+            "command": ["agent", "acp"], "default_model": "small",
+        })
+        self.assertEqual(defaulted.resolve(None, None, None).model, "small")
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            profile.resolve(None, None, "workspace_write")
+        for command in ([], "agent acp", ["agent", ""]):
+            with self.subTest(command=command), self.assertRaisesRegex(ValueError, "ACP command"):
+                AgentProfile.from_mapping({
+                    "id": "bad", "runtime": "acp", "workspace": str(self.workspace),
+                    "command": command,
+                })
+
 
 if __name__ == "__main__":
     unittest.main()

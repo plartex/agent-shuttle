@@ -253,12 +253,14 @@ class TaskManager:
             elif name == "ProfiledBackend":
                 ordered = tuple(policy.value for policy in ToolPolicy)
                 maximum = backend.profile.max_tool_policy.value
-                policies = ordered[:ordered.index(maximum) + 1]
+                policies = (() if backend.profile.runtime == "acp" else
+                            ordered[:ordered.index(maximum) + 1])
             else:
                 policies = ()
             supports_sessions = name != "AntigravitySdkBackend" and callable(getattr(backend, "open_session", None))
             result.append(AgentInfo(agent_id, name, supports_sessions,
-                                    callable(getattr(backend, "resume_session", None)), policies))
+                                    callable(getattr(backend, "resume_session", None))
+                                    and getattr(backend, "supports_resume_after_restart", True), policies))
         return result
 
     async def agent_info(self, agent_id: str, *, capabilities: bool = True,

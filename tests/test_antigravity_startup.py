@@ -53,7 +53,8 @@ class AntigravityStartupTests(unittest.TestCase):
                            "http://127.0.0.1:8766", AntigravityCliInfo(root))
             with patch("agent_shuttle.info.asyncio.create_subprocess_exec",
                        return_value=Process(stdout=envelope)) as spawn:
-                with TestClient(app) as client:
+                with TestClient(app, base_url="http://127.0.0.1:8766",
+                                headers={"Authorization": "Bearer " + app.state.local_credential.token}) as client:
                     self.assertEqual(client.get("/bridge/identity").status_code, 200)
             spawn.assert_called_once()
             self.assertEqual(spawn.call_args.args[1:], ("--output-format", "json", "models"))
