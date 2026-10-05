@@ -83,10 +83,14 @@ def main() -> None:
         run(uv, "pip", "install", "--python", str(library_python), str(wheels[0]),
             cwd=root, env=env, timeout=300)
         imported = run(str(library_python), "-c",
-                       "import agent_shuttle; print(agent_shuttle.__file__)",
+                       "import agent_shuttle, json, sys; "
+                       "print(json.dumps({'prefix': sys.prefix, 'module': agent_shuttle.__file__}))",
                        cwd=root, env=env)
-        if not Path(imported.stdout.strip()).resolve().is_relative_to(library_env):
-            raise AssertionError("Python import resolved outside the project environment")
+        import_info = json.loads(imported.stdout)
+        if not Path(import_info["prefix"]).samefile(library_env):
+            raise AssertionError("Python ran outside the project environment")
+        if Path(import_info["module"]).resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+            raise AssertionError("Python imported Agent Shuttle from the source checkout")
         print("uv tool install, both entry points, MCP handshake, and library import passed")
 
 
