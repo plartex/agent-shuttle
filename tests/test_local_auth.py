@@ -41,7 +41,7 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(proof["signature"], credential.signature(nonce))
 
     async def test_record_rotation_and_ownership(self):
-        with tempfile.TemporaryDirectory(dir=Path.cwd() / ".runtime") as parent:
+        with tempfile.TemporaryDirectory() as parent:
             with patch("agent_shuttle.local_auth._directory", return_value=Path(parent) / "run"):
                 first = LocalCredential.fresh("http://127.0.0.1:8765")
                 second = LocalCredential.fresh(first.origin)
@@ -54,7 +54,7 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(read_local_credential(first.origin))
 
     async def test_replayed_instance_id_does_not_receive_bearer(self):
-        with tempfile.TemporaryDirectory(dir=Path.cwd() / ".runtime") as parent:
+        with tempfile.TemporaryDirectory() as parent:
             with patch("agent_shuttle.local_auth._directory", return_value=Path(parent) / "run"):
                 record = LocalCredential.fresh("http://127.0.0.1:8765")
                 record.publish()
@@ -83,7 +83,7 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Authorization", other.headers)
 
     async def test_unsafe_record_permissions_fail_closed(self):
-        with tempfile.TemporaryDirectory(dir=Path.cwd() / ".runtime") as parent:
+        with tempfile.TemporaryDirectory() as parent:
             directory = Path(parent) / "run"
             with patch("agent_shuttle.local_auth._directory", return_value=directory):
                 credential = LocalCredential.fresh("http://127.0.0.1:8765")
@@ -113,7 +113,7 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
                     credential.remove_if_owned()
 
     async def test_parallel_ports_are_independent(self):
-        with tempfile.TemporaryDirectory(dir=Path.cwd() / ".runtime") as parent:
+        with tempfile.TemporaryDirectory() as parent:
             with patch("agent_shuttle.local_auth._directory", return_value=Path(parent) / "run"):
                 first = LocalCredential.fresh("http://127.0.0.1:8765")
                 second = LocalCredential.fresh("http://127.0.0.1:8766")
