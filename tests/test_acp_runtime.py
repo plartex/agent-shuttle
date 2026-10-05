@@ -182,11 +182,21 @@ class AcpRuntimeTests(unittest.IsolatedAsyncioTestCase):
         runtime = self.runtime()
         session = await runtime.open_session(runtime.profile.resolve(None, None, None))
         running = asyncio.create_task(session.ask("wait"))
-        await asyncio.sleep(0.1)
+        waiting = Path(self.temp.name) / "acp-waiting.flag"
+        for _ in range(100):
+            if waiting.is_file():
+                break
+            await asyncio.sleep(0.01)
+        self.assertTrue(waiting.is_file())
         running.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await running
-        self.assertTrue((Path(self.temp.name) / "acp-cancelled.flag").is_file())
+        cancelled = Path(self.temp.name) / "acp-cancelled.flag"
+        for _ in range(100):
+            if cancelled.is_file():
+                break
+            await asyncio.sleep(0.01)
+        self.assertTrue(cancelled.is_file())
         await session.close()
         self.assertIsNotNone(session.process.returncode)
         session = await runtime.open_session(runtime.profile.resolve(None, None, None))
