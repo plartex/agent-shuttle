@@ -285,12 +285,12 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
             session = _AntigravityCliSession(process, policy=policy, turn_timeout_seconds=0.01)
             loop = asyncio.get_running_loop()
 
-            def stop_tree(argv, **kwargs):
+            def stop_tree(pid):
                 self.assertIsNone(process.returncode)
-                self.assertEqual(argv, ["taskkill", "/PID", "12345", "/T", "/F"])
+                self.assertEqual(pid, 12345)
                 loop.call_soon_threadsafe(process.kill)
 
-            with patch("agent_shuttle.backends.subprocess.run", side_effect=stop_tree) as stop:
+            with patch("agent_shuttle.process_lifecycle._terminate_windows_tree", side_effect=stop_tree) as stop:
                 with self.assertRaisesRegex(TimeoutError, "agy session"):
                     await session.ask("hello")
             stop.assert_called_once()

@@ -126,7 +126,7 @@ class StructuredOutputTests(unittest.IsolatedAsyncioTestCase):
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
-        server = uvicorn.Server(uvicorn.Config(make_app("test", Backend(), url),
+        server = uvicorn.Server(uvicorn.Config(make_app("test", Backend(), url, publish_credential=True),
                                                host="127.0.0.1", port=port, log_level="error"))
         running = asyncio.create_task(server.serve())
         try:

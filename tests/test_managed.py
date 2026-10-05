@@ -10,15 +10,49 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_shuttle import HarnessLaunch, connect_harness
+from agent_shuttle.managed import HarnessConfigurationMismatch, _verify_connection
+from agent_shuttle.local_auth import PeerAuthenticationError
 
 
 class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_untrusted_process_on_requested_port_gets_no_reused_port(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
+                                   command="C:/tools/codex.exe")
+            identity = {"pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve())}
+            client = SimpleNamespace(identity=AsyncMock(side_effect=[
+                PeerAuthenticationError("proof failed"), identity]))
+            process = MagicMock(pid=123, returncode=None)
+            process.poll.return_value = None
+            with patch("agent_shuttle.managed._port_in_use", return_value=True), \
+                 patch("agent_shuttle.managed._available_port", return_value=8767), \
+                 patch("agent_shuttle.managed.subprocess.Popen", return_value=process) as popen, \
+                 patch("agent_shuttle.managed.asyncio.sleep", new_callable=AsyncMock):
+                async with connect_harness(launch, client=client) as connection:
+                    self.assertEqual(connection.url, "http://127.0.0.1:8767")
+                    argv = popen.call_args.args[0]
+                    self.assertEqual(argv[argv.index("--port") + 1], "8767")
+            self.assertEqual(client.identity.await_args_list[0].args[0], launch.url)
+            self.assertEqual(client.identity.await_args_list[1].args[0], "http://127.0.0.1:8767")
+
+    async def test_acp_advisory_policy_is_accepted_without_read_only_claim(self):
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("acp", "http://127.0.0.1:8768", Path(folder),
+                                   tool_policy="read_only")
+            identity = {"pid": 123, "backend": "acp", "workspace": str(Path(folder).resolve()),
+                        "read_only_tools": False, "tool_policy_enforcement": "advisory",
+                        "supported_tool_policies": [],
+                        "advisory_tool_policies": ["no_tools", "read_only"]}
+            _verify_connection(launch, identity)
+            with self.assertRaises(HarnessConfigurationMismatch):
+                _verify_connection(launch, {**identity, "advisory_tool_policies": []})
+
     async def test_antigravity_readiness_waits_for_authenticated_model_catalog(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             launch = HarnessLaunch("antigravity", "http://127.0.0.1:8766", root,
                                    command="C:/tools/agy.exe")
-            identity = {"backend": "agy_cli", "workspace": str(root.resolve()),
+            identity = {"pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                         "agy_permission_mode": "settings", "agy_turn_timeout_seconds": 300}
             # Startup now checks `agy models` (45s maximum) before HTTP listens.
             # A healthy CLI can appear later than the former 30s polling window.
@@ -48,7 +82,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             )
             client = SimpleNamespace(identity=AsyncMock(side_effect=[
                 OSError("offline"), {
-                    "backend": "agy_cli", "workspace": str(root.resolve()),
+                    "pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                     "agy_permission_mode": "all", "agy_turn_timeout_seconds": 300,
                 },
             ]))
@@ -69,7 +103,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 log_path=root / "bridge.log",
             )
             client = SimpleNamespace(identity=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "opencode", "workspace": str(root.resolve()),
+                OSError("offline"), {"pid": 123, "backend": "opencode", "workspace": str(root.resolve()),
                                    "read_only_tools": True},
             ]))
             process = MagicMock(pid=123, returncode=None)
@@ -91,7 +125,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             )
             client = SimpleNamespace(identity=AsyncMock(side_effect=[
                 OSError("offline"), {
-                    "backend": "agy_cli", "workspace": str(root.resolve()),
+                    "pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                     "agy_permission_mode": "all", "agy_turn_timeout_seconds": 300,
                 },
             ]))
@@ -108,7 +142,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             launch = HarnessLaunch("antigravity", "http://127.0.0.1:8766", root)
             client = SimpleNamespace(
                 identity=AsyncMock(return_value={
-                    "backend": "agy_cli", "workspace": str(root.resolve()),
+                    "pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                     "read_only_tools": False, "agy_permission_mode": "settings",
                     "agy_turn_timeout_seconds": 300,
                 }),
@@ -125,7 +159,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
             client = SimpleNamespace(capabilities=AsyncMock(return_value={
-                "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
+                "pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
                 "read_only_tools": True,
             }))
             with patch("agent_shuttle.managed.subprocess.Popen") as popen:
@@ -142,7 +176,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 command="C:/tools/opencode.exe", log_path=root / "bridge.log",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "opencode", "workspace": str(root.resolve()),
+                OSError("offline"), {"pid": 123, "backend": "opencode", "workspace": str(root.resolve()),
                                     "read_only_tools": False},
             ]))
             process = MagicMock(pid=123, returncode=None)
@@ -158,11 +192,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(profile["default_model"], launch.model)
             process.terminate.assert_called_once()
             process.wait.assert_called_once()
-            if os.name == "nt":
-                self.mock_taskkill.assert_called_with(
-                    ["taskkill", "/PID", "123", "/T", "/F"],
-                    capture_output=True, timeout=10, check=False,
-                )
+            self.mock_taskkill.assert_not_called()
 
     async def test_explicit_server_must_be_available(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -183,7 +213,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             launch = HarnessLaunch("claude_code", "http://127.0.0.1:8768", root,
                                    profile_path=profile, log_path=root / "bridge.log")
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "claude_code", "workspace": str(root.resolve()),
+                OSError("offline"), {"pid": 123, "backend": "claude_code", "workspace": str(root.resolve()),
                                     "read_only_tools": False},
             ]))
             process = MagicMock(pid=123, returncode=None)
@@ -200,7 +230,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
                                    command="agent-bridge")
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
+                OSError("offline"), {"pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
                                     "read_only_tools": True},
             ]))
             process = MagicMock(pid=123, returncode=None)
@@ -216,7 +246,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_wrong_backend_is_not_silently_reused(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
-            client = SimpleNamespace(capabilities=AsyncMock(return_value={"backend": "opencode"}))
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={"pid": 123, "backend": "opencode"}))
             with self.assertRaisesRegex(ValueError, "opencode"):
                 async with connect_harness(launch, client=client):
                     pass
@@ -225,7 +255,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as other:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
             client = SimpleNamespace(capabilities=AsyncMock(return_value={
-                "backend": "codex_app_server", "workspace": str(Path(other).resolve()),
+                "pid": 123, "backend": "codex_app_server", "workspace": str(Path(other).resolve()),
                 "read_only_tools": True,
             }))
             with patch("agent_shuttle.managed.subprocess.Popen") as popen:
@@ -237,7 +267,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_workspace_is_not_silently_reused(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder))
-            client = SimpleNamespace(capabilities=AsyncMock(return_value={"backend": "codex_app_server"}))
+            client = SimpleNamespace(capabilities=AsyncMock(return_value={"pid": 123, "backend": "codex_app_server"}))
             with self.assertRaisesRegex(ValueError, "workspace"):
                 async with connect_harness(launch, client=client):
                     pass
@@ -250,7 +280,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 command="C:/tools/opencode.exe", tool_policy="read_only", log_path=root / "bridge.log",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "opencode", "workspace": str(root.resolve()),
+                OSError("offline"), {"pid": 123, "backend": "opencode", "workspace": str(root.resolve()),
                                     "read_only_tools": True},
             ]))
             process = MagicMock(pid=123, returncode=None)
@@ -300,7 +330,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 agy_dangerously_skip_permissions=True,
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
+                OSError("offline"), {"pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                                     "read_only_tools": False, "agy_permission_mode": "all",
                                     "agy_turn_timeout_seconds": 300},
             ]))
@@ -319,7 +349,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 command="C:/tools/agy.exe", log_path=root / "bridge.log",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
+                OSError("offline"), {"pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                                     "read_only_tools": False, "agy_permission_mode": "settings",
                                     "agy_turn_timeout_seconds": 300},
             ]))
@@ -339,7 +369,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 agy_turn_timeout_seconds=42,
             )
             client = SimpleNamespace(identity=AsyncMock(side_effect=[
-                OSError("offline"), {"backend": "agy_cli", "workspace": str(root.resolve()),
+                OSError("offline"), {"pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                                     "agy_permission_mode": "settings",
                                     "agy_turn_timeout_seconds": 42},
             ]))
@@ -359,7 +389,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                 agy_dangerously_skip_permissions=False,
             )
             client = SimpleNamespace(capabilities=AsyncMock(return_value={
-                "backend": "agy_cli", "workspace": str(root.resolve()),
+                "pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
                 "agy_permission_mode": "all",
             }))
             with patch("agent_shuttle.managed.subprocess.Popen") as popen:

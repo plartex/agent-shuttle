@@ -8,9 +8,9 @@
 
 [Russian version / Русская версия](README.ru.md)
 
-Agent Shuttle gives Python applications one way to work with **Codex**, **Antigravity**, **OpenCode**, and **Claude Code**. It runs local agent tasks, preserves multi-turn sessions, and exposes the agents through [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) and [MCP](https://modelcontextprotocol.io/).
+Agent Shuttle gives Python applications one way to work with **Codex**, **Antigravity**, **OpenCode**, **Claude Code**, and configured **ACP agents**. It runs local agent tasks, preserves multi-turn sessions, and exposes the agents through [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) and [MCP](https://modelcontextprotocol.io/).
 
-It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and enforce tool permission boundaries—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
+It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and report each runtime's tool permission guarantees—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
 
 ---
 
@@ -22,6 +22,7 @@ It allows agents and external applications to delegate tasks to peer agents, reu
 | **Antigravity** | Official `agy` CLI in headless mode (`-p` / `stream-json`) | Signed-in Antigravity account | Real-time models, efforts, and `/usage` quotas. Default settings or full access (`--dangerously-skip-permissions`). Optional legacy SDK backend. |
 | **OpenCode** | Managed local HTTP server (`--pure serve`) | Local Ollama or cloud providers | Configured via JSON profile, fine-grained tool policies (`no_tools`, `read_only`, `workspace_write`, `full_access`), model variants. |
 | **Claude Code** | Managed CLI in print mode (`claude -p`) | Local Ollama endpoint or Anthropic | Configured via JSON profile, isolated temporary session configs, resume support, safe mode vs full access. |
+| **Configured ACP agent** | Agent Client Protocol over local stdio | Agent's own account and model configuration | Register a command in a JSON profile; streamed updates, cancellation, and capability-gated session loading. Tool policies are advisory. |
 
 ---
 
@@ -129,13 +130,20 @@ asyncio.run(main())
 # Discover locally installed harnesses without starting models
 agent-shuttle discover
 
+# Check installation and connection without a model turn
+agent-shuttle doctor
+agent-shuttle doctor --profile .\examples\opencode-ollama.json
+
+# After fixing a reported issue, verify one real turn (uses model tokens)
+agent-shuttle doctor codex --smoke
+
 # Start an A2A server for Codex
 agent-shuttle serve codex --workspace . --port 8765
 
 # Start an A2A server for Antigravity (CLI mode)
 agent-shuttle serve antigravity --workspace . --port 8766
 
-# Start an A2A server from a profile (OpenCode or Claude Code)
+# Start an A2A server from a profile (OpenCode, Claude Code or ACP)
 agent-shuttle serve profile --profile .\examples\opencode-ollama.json --workspace . --port 8767
 
 # Query server capabilities, models, and quota limits
@@ -144,6 +152,27 @@ agent-shuttle info http://127.0.0.1:8765
 # Send a task from the command line
 agent-shuttle ask http://127.0.0.1:8765 "Summarize recent changes" --model gpt-5.6-terra
 ```
+
+`doctor` reports installation, connection and turn verification separately. Its default run checks built-ins and local profiles registered in `BRIDGE_AGENTS_JSON`; missing optional runtimes are skipped. OpenCode and Claude Code need a JSON profile for connection checks. `--json` provides the same report for scripts. Exit codes are `0` for passed checks, `1` for a failed target or smoke turn, and `2` for invalid invocation or configuration. `--smoke` requires one target and uses enforced `no_tools` (or Codex `read_only`); ACP smoke is rejected because ACP cannot enforce those restrictions.
+
+### Register an ACP agent
+
+Copy [`examples/acp-worker.json`](examples/acp-worker.json), set `command` to the installed agent's ACP launch command, and set `workspace` to the project directory. `command` is an argument array; it is never run through a shell. `provider`, `default_model`, `allowed_models`, and `reasoning_efforts` are optional for ACP. Without allowlists, an explicit model or effort may select any variant advertised in the session's ACP config options; configured allowlists narrow those choices.
+
+```powershell
+agent-shuttle discover --profile .\examples\acp-worker.json
+agent-shuttle serve profile --profile .\examples\acp-worker.json --port 8768
+agent-shuttle info http://127.0.0.1:8768
+agent-shuttle ask http://127.0.0.1:8768 "Explain this project" --tool-policy read_only
+```
+
+For MCP managed startup, map an arbitrary ID to the profile in `BRIDGE_AGENTS_JSON`:
+
+```json
+{"my-acp": {"harness": "acp", "profile": "C:/profiles/my-acp.json"}}
+```
+
+ACP discovery checks the command without starting the agent. `info` performs the ACP handshake and reports negotiated capabilities without sending a model prompt. ACP policies are **advisory**: results include a warning, and `read_only_tools` remains false because the agent may use tools outside client permission requests. Use a verified external sandbox when an enforceable restriction is required.
 
 ### 3. Model Context Protocol (MCP)
 
@@ -154,7 +183,7 @@ agent-shuttle-mcp
 ```
 
 Available MCP tools:
-- `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`: Reuses a matching local A2A server or starts a temporary one. Built-in IDs are `codex`, `antigravity`, `opencode`, and `claude_code`; the latter two need a profile or an Ollama model.
+- `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`: Reuses a matching local A2A server or starts a temporary one. Built-in IDs are `codex`, `antigravity`, `opencode`, and `claude_code`; configured ACP IDs require a JSON profile in `BRIDGE_AGENTS_JSON`.
 - `get_agent_info(agent_id, workspace?)`: Fetches live models and quotas, starting a temporary server if needed.
 - `ask_antigravity(prompt, model?, reasoning_effort?, workspace?, tool_policy?, turn_timeout_seconds=300)`: Starts an Antigravity server if one is not running.
 - `ask_codex(prompt, model?, reasoning_effort?, workspace?)`: Starts a Codex server if one is not running.
@@ -190,6 +219,8 @@ Agent Shuttle defines four standardized tool policies:
 - `workspace_write`: Allows editing files within the designated workspace.
 - `full_access`: Explicitly unclamps all tool restrictions and approval prompts.
 
+For configured ACP agents, these policies are advisory. Agent Shuttle checks ACP permission requests but cannot prevent an agent from acting outside them. See the [permissions guide](docs/permissions.md#5-configured-acp-agent).
+
 > [!WARNING]
 > `full_access` grants the worker unrestricted tool access for that task. `--agy-dangerously-skip-permissions` enables that capability for the Antigravity server. Keep servers on loopback. Antigravity's explicit scoped `read_only` policy is enforced by its verified `PreToolUse` hook; an implicit/default CLI policy does not provide the same guarantee.
 
@@ -199,11 +230,13 @@ Agent Shuttle defines four standardized tool policies:
 
 Agent Shuttle provides a comprehensive offline test suite using fake backends that execute without network access, credentials, or model quota consumption:
 
+GitHub Actions runs this same suite on Windows, Ubuntu Linux, and Apple Silicon macOS (`macos-15`), each with Python 3.11 and 3.12. The process smoke uses only a local Python worker and checks process-tree cleanup; no agent CLI or account is needed.
+
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-Opt-in integration tests against real models can be executed by specifying target environments (e.g. `BRIDGE_LIVE_OLLAMA_MODEL=qwen3.5:9b` or `BRIDGE_LIVE_AGY_FULL_ACCESS=1`). See [CONTRIBUTING.md](CONTRIBUTING.md) for full instructions.
+Live integration tests against real models are separate, opt-in checks and are not part of the six CI jobs. They can be executed by specifying target environments (e.g. `BRIDGE_LIVE_OLLAMA_MODEL=qwen3.5:9b` or `BRIDGE_LIVE_AGY_FULL_ACCESS=1`). See [CONTRIBUTING.md](CONTRIBUTING.md) for full instructions.
 
 ---
 

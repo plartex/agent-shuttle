@@ -8,6 +8,8 @@ import inspect
 import math
 import uuid
 import json
+import hmac
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from time import monotonic
@@ -19,7 +21,8 @@ from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, TaskState
+from a2a.types import (AgentCapabilities, AgentCard, AgentInterface, AgentSkill,
+                       HTTPAuthSecurityScheme, SecurityScheme, SecurityRequirement, TaskState)
 from a2a.utils.errors import InvalidParamsError
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -35,6 +38,40 @@ from .profiles import ToolPolicy
 from .structured import encode_output_schema
 from .task_library import TaskManager
 from .runtime_context import NESTED_DISPATCH_ERROR, is_worker_context
+from .local_auth import LocalCredential
+
+
+class _LoopbackAuth:
+    """Reject browser and unauthenticated traffic before any A2A route runs."""
+
+    def __init__(self, app, credential: LocalCredential):
+        self.app = app
+        self.credential = credential
+        self.host = f"127.0.0.1:{credential.port}".encode("ascii")
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        headers = scope.get("headers", [])
+        hosts = [value for key, value in headers if key.lower() == b"host"]
+        origins = [value for key, value in headers if key.lower() == b"origin"]
+        auth = [value for key, value in headers if key.lower() == b"authorization"]
+        status = None
+        if len(hosts) != 1 or hosts[0] != self.host:
+            status = 421
+        elif any(origins):
+            status = 403
+        elif scope.get("path") not in {"/.well-known/agent-card.json", "/bridge/proof"}:
+            prefix = b"Bearer "
+            if (len(auth) != 1 or not auth[0].startswith(prefix)
+                    or not hmac.compare_digest(auth[0][len(prefix):], self.credential.token.encode())):
+                status = 401
+        if status is None:
+            return await self.app(scope, receive, send)
+        response = JSONResponse({"error": "Unauthorized" if status == 401 else "Forbidden"}, status_code=status)
+        if status == 401:
+            response.headers["WWW-Authenticate"] = 'Bearer realm="Agent Shuttle"'
+        await response(scope, receive, send)
 
 
 @dataclass
@@ -351,10 +388,12 @@ class _IdempotentRequestHandler(DefaultRequestHandler):
 
 def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider | None = None,
              *, task_store=None, execution_timeout_seconds: float = 1800,
-             stall_timeout_seconds: float = 1800) -> Starlette:
+             stall_timeout_seconds: float = 1800,
+             credential: LocalCredential | None = None, publish_credential: bool = False) -> Starlette:
     for budget in (execution_timeout_seconds, stall_timeout_seconds):
         if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget <= 0:
             raise ValueError("worker budgets must be positive finite numbers")
+    credential = credential or LocalCredential.fresh(url)
     skill = AgentSkill(
         id=f"run_{name}",
         name=f"Run {name} task",
@@ -380,6 +419,9 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=url, protocol_version="1.0")],
         skills=[skill],
     )
+    card.security_schemes["agentShuttleBearer"].CopyFrom(SecurityScheme(
+        http_auth_security_scheme=HTTPAuthSecurityScheme(scheme="bearer")))
+    card.security_requirements.append(SecurityRequirement(schemes={"agentShuttleBearer": {}}))
     library_database = getattr(task_store, "path", None)
     if isinstance(library_database, Path):
         library_database = library_database.with_suffix(".library.sqlite3")
@@ -420,7 +462,17 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             result["max_tool_policy"] = backend.profile.max_tool_policy.value
             policies = list(ToolPolicy)
             maximum = policies.index(backend.profile.max_tool_policy)
-            result["supported_tool_policies"] = [p.value for p in policies[:maximum + 1]]
+            accepted = [p.value for p in policies[:maximum + 1]]
+            if backend.profile.runtime == "acp":
+                result["supported_tool_policies"] = []
+                result["advisory_tool_policies"] = accepted
+                result["tool_policy_enforcement"] = "advisory"
+                result["tool_policy_notes"] = (
+                    "ACP agents may use tools outside client permission requests. "
+                    "Requested read_only and workspace_write policies are not enforced."
+                )
+            else:
+                result["supported_tool_policies"] = accepted
             result["default_tool_policy"] = backend.profile.default_tool_policy.value
         elif isinstance(backend, CodexBackend):
             result["supported_tool_policies"] = ["read_only", "workspace_write", "full_access"]
@@ -430,6 +482,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         result["read_only_tools"] = (
             isinstance(backend, (CodexBackend, AntigravityCliBackend))
             or isinstance(backend, ProfiledBackend)
+            and backend.profile.runtime != "acp"
             and backend.profile.max_tool_policy in {
                 ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS,
             }
@@ -455,6 +508,13 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
 
     async def bridge_identity(request):
         return JSONResponse(identity_data())
+
+    async def bridge_proof(request):
+        nonce = request.query_params.get("nonce", "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", nonce):
+            return JSONResponse({"error": "nonce must be a 32-byte base64url value"}, status_code=400)
+        return JSONResponse({"instance_id": credential.instance_id,
+                             "origin": credential.origin, "signature": credential.signature(nonce)})
 
     async def bridge_info(request):
         if info_provider is None:
@@ -505,8 +565,12 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             async with manager:
                 janitor = asyncio.create_task(reap_loop())
                 try:
+                    if publish_credential:
+                        credential.publish()
                     yield
                 finally:
+                    if publish_credential:
+                        credential.remove_if_owned()
                     janitor.cancel()
                     try:
                         await janitor
@@ -526,6 +590,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
     app = Starlette(
         lifespan=lifespan,
         routes=[
+            Route("/bridge/proof", bridge_proof),
             Route("/bridge/identity", bridge_identity),
             Route("/bridge/info", bridge_info),
             Route("/bridge/capabilities", bridge_info),
@@ -536,4 +601,6 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         ]
     )
     app.state.task_manager = manager
+    app.state.local_credential = credential
+    app.add_middleware(_LoopbackAuth, credential=credential)
     return app

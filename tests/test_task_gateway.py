@@ -22,7 +22,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                 closed.append(launch.url)
 
         with tempfile.TemporaryDirectory() as folder:
-            client = BridgeClient()
+            client = BridgeClient(credentials={"http://127.0.0.1:1234": "secret-marker"})
             client.submit = AsyncMock(return_value=TaskHandle(client, "http://127.0.0.1:1234", "job", "context"))
             client.task_status = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_WORKING", ""))
             client.cancel_task = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_CANCELED", ""))
@@ -43,7 +43,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             yield SimpleNamespace(url=launch.url)
 
         with tempfile.TemporaryDirectory() as folder:
-            client = BridgeClient()
+            client = BridgeClient(credentials={"http://127.0.0.1:1234": "secret-marker"})
             client.submit = AsyncMock(return_value=TaskHandle(client, "http://127.0.0.1:1234", "job", "context"))
             client.task_status = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_COMPLETED", "done"))
             path = Path(folder) / "registry.json"
@@ -51,6 +51,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             with patch("agent_shuttle.mcp_tasks.connect_harness", connect):
                 first = TaskGateway(path, client=client)
                 await first.submit(launch, "review", None, None, None)
+                self.assertNotIn("secret-marker", path.read_text(encoding="utf-8"))
                 await first.close()
                 second = TaskGateway(path, client=client)
                 reopened = await second.handle("job")

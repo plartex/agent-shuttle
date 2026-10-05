@@ -1,5 +1,6 @@
 import unittest
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,6 +24,7 @@ class DiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown harnesses"):
             discover_harnesses({"unknown": "anything"})
 
+    @unittest.skipUnless(os.name == "nt", "Windows .exe fallback")
     def test_opencode_can_be_found_outside_path(self):
         with patch("agent_shuttle.discovery.shutil.which", return_value=None), \
              patch("agent_shuttle.discovery.Path.is_file", autospec=True,
@@ -37,6 +39,7 @@ class DiscoveryTests(unittest.TestCase):
              patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=object()):
             self.assertEqual(discover_harnesses(), {"codex": "agent-shuttle"})
 
+    @unittest.skipUnless(os.name == "nt", "Windows source checkout executable")
     def test_antigravity_is_found_in_source_checkout_bin(self):
         bundled = Path(discovery.__file__).resolve().parents[2] / "bin" / "agy.exe"
         with patch.dict(os.environ, {"BRIDGE_AGY_COMMAND": ""}), \
@@ -54,3 +57,21 @@ class DiscoveryTests(unittest.TestCase):
              patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
             found = discover_harnesses()
         self.assertEqual(Path(found["antigravity"]), Path(command))
+
+    @unittest.skipIf(os.name == "nt", "POSIX fallback names")
+    def test_posix_fallback_uses_executables_without_exe(self):
+        with patch("agent_shuttle.discovery.shutil.which", return_value=None), \
+             patch("agent_shuttle.discovery._is_file",
+                   side_effect=lambda path: str(path).endswith("/.local/bin/agy")), \
+             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
+            found = discover_harnesses()
+        self.assertTrue(found["antigravity"].endswith("/.local/bin/agy"))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS Homebrew fallback")
+    def test_macos_homebrew_fallback(self):
+        with patch("agent_shuttle.discovery.shutil.which", return_value=None), \
+             patch("agent_shuttle.discovery._is_file",
+                   side_effect=lambda path: str(path) == "/opt/homebrew/bin/agy"), \
+             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
+            found = discover_harnesses()
+        self.assertEqual(found["antigravity"], "/opt/homebrew/bin/agy")

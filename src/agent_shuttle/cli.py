@@ -6,17 +6,26 @@ import argparse
 import asyncio
 import json
 import os
+import sys
+import socket
 from pathlib import Path
 
 import uvicorn
 
 from .a2a_server import make_app
-from .backends import AntigravityCliBackend, AntigravitySdkBackend, CodexBackend
 from .client import BridgeClient
 from .discovery import discover_harnesses
-from .info import AntigravityCliInfo, AntigravitySdkInfo, CodexInfo
 from .profiles import AgentProfile
-from .registry import build_profile
+from .registry import build_builtin, build_profile
+
+
+def _run_server(app, port: int) -> None:
+    """Bind first so lifespan can safely publish the credential for this port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", port))
+        listener.listen(2048)
+        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port))
+        asyncio.run(server.serve(sockets=[listener]))
 
 
 def main() -> None:
@@ -24,7 +33,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     serve = sub.add_parser("serve", help="Expose a local agent profile through A2A")
     serve.add_argument("agent", choices=["codex", "antigravity", "profile"])
-    serve.add_argument("--profile", type=Path, help="JSON profile for OpenCode or Claude Code")
+    serve.add_argument("--profile", type=Path, help="JSON profile for OpenCode, Claude Code or ACP")
     serve.add_argument("--workspace", type=Path, help="Project directory; overrides profile workspace")
     serve.add_argument("--port", type=int, required=True)
     serve.add_argument("--task-db", type=Path, help="Persist tasks and request bindings in this SQLite file")
@@ -53,13 +62,41 @@ def main() -> None:
     discover.add_argument("--agy-command")
     discover.add_argument("--opencode-command")
     discover.add_argument("--claude-command")
+    discover.add_argument("--profile", type=Path, help="Check the configured ACP command without starting it")
+    doctor = sub.add_parser("doctor", help="Check local agent readiness without a model turn")
+    doctor.add_argument("agent_id", nargs="?", help="Built-in or BRIDGE_AGENTS_JSON agent ID")
+    doctor.add_argument("--profile", type=Path, help="Check one JSON agent profile")
+    doctor.add_argument("--smoke", action="store_true", help="Run one model turn with the safest enforced policy")
+    doctor.add_argument("--json", action="store_true", help="Print a machine-readable diagnostic report")
     args = parser.parse_args()
+    if args.command == "doctor":
+        from .doctor import DoctorConfigError, diagnose, format_report
+        try:
+            report = asyncio.run(diagnose(args.agent_id, profile_path=args.profile, smoke=args.smoke))
+        except DoctorConfigError as exc:
+            if args.json:
+                print(json.dumps({"schema_version": 1, "status": "ERROR", "checks": [],
+                                  "error": str(exc)}, ensure_ascii=False))
+            else:
+                print(f"doctor: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else format_report(report))
+        if report["status"] == "FAIL":
+            raise SystemExit(1)
+        return
     if args.command == "discover":
         overrides = {name: value for name, value in (
             ("antigravity", args.agy_command), ("opencode", args.opencode_command),
             ("claude_code", args.claude_command),
         ) if value}
-        print(json.dumps(discover_harnesses(overrides), ensure_ascii=False, indent=2))
+        result = discover_harnesses(overrides)
+        if args.profile:
+            profile = AgentProfile.from_file(args.profile)
+            if profile.runtime != "acp":
+                parser.error("discover --profile requires an ACP profile")
+            from .acp_runtime import AcpRuntime
+            result[profile.id] = asyncio.run(AcpRuntime(profile).discover())
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return
     if args.command == "ask":
         result = asyncio.run(
@@ -94,30 +131,23 @@ def main() -> None:
         if not workspace.is_dir():
             parser.error("--workspace must be a directory")
         name = args.agent
-    if args.agent == "codex":
-        backend = CodexBackend(workspace)
-        info_provider = CodexInfo(workspace)
-    elif args.agent == "antigravity" and args.agy_mode == "sdk":
-        backend = AntigravitySdkBackend(workspace, args.agy_python)
-        info_provider = AntigravitySdkInfo()
-    elif args.agent == "antigravity":
-        backend = AntigravityCliBackend(
-            workspace, args.agy_command,
+    if args.agent != "profile":
+        backend, info_provider = build_builtin(
+            args.agent, workspace, command=args.agy_command, mode=args.agy_mode,
+            python=args.agy_python,
             dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
-            turn_timeout_seconds=(
-                args.agy_turn_timeout_seconds
-                if args.agy_turn_timeout_seconds is not None else 300
-            ),
+            turn_timeout_seconds=args.agy_turn_timeout_seconds or 300,
         )
-        info_provider = AntigravityCliInfo(workspace, args.agy_command)
     url = f"http://127.0.0.1:{args.port}"
     store = None
     if args.task_db is not None:
         from .task_store import SQLiteTaskStore
         store = SQLiteTaskStore(args.task_db)
-    uvicorn.run(make_app(name, backend, url, info_provider, task_store=store,
-                         execution_timeout_seconds=args.execution_timeout_seconds,
-                         stall_timeout_seconds=args.stall_timeout_seconds), host="127.0.0.1", port=args.port)
+    app = make_app(name, backend, url, info_provider, task_store=store,
+                   execution_timeout_seconds=args.execution_timeout_seconds,
+                   stall_timeout_seconds=args.stall_timeout_seconds,
+                   publish_credential=True)
+    _run_server(app, args.port)
 
 
 if __name__ == "__main__":

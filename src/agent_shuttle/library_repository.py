@@ -60,7 +60,7 @@ class LibraryTaskRepository:
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, model TEXT,
                     reasoning_effort TEXT, tool_policy TEXT, state TEXT NOT NULL,
-                    native_id TEXT,
+                    native_id TEXT, resume_supported INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL, updated_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS preferences (
@@ -70,6 +70,9 @@ class LibraryTaskRepository:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
             if "native_id" not in columns:
                 conn.execute("ALTER TABLE sessions ADD COLUMN native_id TEXT")
+            if "resume_supported" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN resume_supported INTEGER NOT NULL DEFAULT 0")
+                conn.execute("UPDATE sessions SET resume_supported=1 WHERE native_id IS NOT NULL")
             task_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
             if "warnings" not in task_columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN warnings TEXT")
@@ -235,11 +238,12 @@ class LibraryTaskRepository:
             "SELECT id FROM sessions WHERE state IN ('open','suspended') AND updated_at<? ORDER BY updated_at",
             (cutoff,)).fetchall()]
 
-    def set_session_state(self, session_id: str, state: str, native_id: str | None = None):
+    def set_session_state(self, session_id: str, state: str, native_id: str | None = None,
+                          resume_supported: bool = False):
         conn = self._db()
         if state == "open":
-            conn.execute("UPDATE sessions SET state='open', native_id=?, updated_at=? WHERE id=?",
-                         (native_id, time(), session_id))
+            conn.execute("UPDATE sessions SET state='open', native_id=?, resume_supported=?, updated_at=? WHERE id=?",
+                         (native_id, int(resume_supported), time(), session_id))
         elif state == "interrupted":
             conn.execute("UPDATE sessions SET state='interrupted', updated_at=? WHERE id=? AND state IN ('open','suspended')",
                          (time(), session_id))
@@ -268,9 +272,9 @@ class LibraryTaskRepository:
                              (now, json.dumps(error), row["id"]))
                 self._append(conn, row["id"], "failed", error)
             for row in conn.execute(
-                    "SELECT id, agent_id, native_id FROM sessions WHERE state IN ('open','suspended')").fetchall():
+                    "SELECT id, agent_id, native_id, resume_supported FROM sessions WHERE state IN ('open','suspended')").fetchall():
                 resumable = (row["native_id"] is not None and row["id"] not in interrupted_sessions
-                             and row["agent_id"] in resumable_agents)
+                             and row["agent_id"] in resumable_agents and bool(row["resume_supported"]))
                 conn.execute("UPDATE sessions SET state=?, updated_at=? WHERE id=?",
                              ("suspended" if resumable else "interrupted", now, row["id"]))
             conn.commit()
@@ -281,8 +285,9 @@ class LibraryTaskRepository:
     def suspend_open_sessions(self, resumable_agents: set[str]):
         conn = self._db()
         now = time()
-        for row in conn.execute("SELECT id, agent_id, native_id FROM sessions WHERE state='open'").fetchall():
-            resumable = row["native_id"] is not None and row["agent_id"] in resumable_agents
+        for row in conn.execute("SELECT id, agent_id, native_id, resume_supported FROM sessions WHERE state='open'").fetchall():
+            resumable = (row["native_id"] is not None and row["agent_id"] in resumable_agents
+                         and bool(row["resume_supported"]))
             conn.execute("UPDATE sessions SET state=?, updated_at=? WHERE id=?",
                          ("suspended" if resumable else "interrupted", now, row["id"]))
         conn.commit()

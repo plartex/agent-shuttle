@@ -6,8 +6,6 @@ import asyncio
 import json
 import math
 import os
-import signal
-import subprocess
 from types import SimpleNamespace
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +13,7 @@ from typing import Protocol
 
 from .agy_policy import SCOPED_POLICIES, ScopedAgyPolicy
 from .runtime_context import worker_env
+from .process_lifecycle import spawn_options, stop_async_process
 from .structured import encode_output_schema, validate_output
 
 
@@ -441,20 +440,19 @@ class AntigravityCliBackend:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **spawn_options(),
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
                     _read_agy_headless_output(process), timeout=remaining,
                 )
             except asyncio.TimeoutError as exc:
-                process.kill()
-                await process.wait()
+                await stop_async_process(process)
                 raise TimeoutError(
                     f"agy did not return a result within {self.turn_timeout_seconds:g}s"
                 ) from exc
             except asyncio.CancelledError:
-                process.kill()
-                await process.wait()
+                await stop_async_process(process)
                 raise
             if process.returncode:
                 authentication_error = _agy_authentication_error(stderr)
@@ -563,7 +561,7 @@ class AntigravityCliBackend:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=2_000_000,
-                **({"start_new_session": True} if scoped is not None and os.name != "nt" else {}),
+                **spawn_options(),
             )
         except BaseException:
             if scoped is not None:
@@ -755,26 +753,9 @@ class _AntigravityCliSession:
 
     async def close(self) -> None:
         try:
-            pid = getattr(self.process, "pid", None)
-            if self.policy is not None and pid is not None and self.process.returncode is None:
-                # Stop descendants before releasing a Windows working directory lock.
-                if os.name == "nt":
-                    await asyncio.to_thread(
-                        subprocess.run, ["taskkill", "/PID", str(pid), "/T", "/F"],
-                        capture_output=True, check=False, timeout=10,
-                    )
-                else:
-                    try:
-                        os.killpg(pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
             if self.process.stdin is not None and not self.process.stdin.is_closing():
                 self.process.stdin.close()
-            try:
-                await asyncio.wait_for(self.process.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                self.process.kill()
-                await self.process.wait()
+            await stop_async_process(self.process)
             await self.stderr_task
         finally:
             if self.policy is not None:

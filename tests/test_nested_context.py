@@ -253,7 +253,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
                     "--port", "8765", "--task-db", str(parent_database)]
             with patch.dict(os.environ, {WORKER_CONTEXT_ENV: "worker"}), \
                  patch("sys.argv", argv), \
-                 patch("agent_shuttle.cli.uvicorn.run") as run:
+                 patch("agent_shuttle.cli._run_server") as run:
                 main()
             self.assertFalse(parent_database.exists())
             self.assertTrue((Path(folder) / "nested" / parent_database.name).exists())
@@ -312,7 +312,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
             url = f"http://127.0.0.1:{port}"
             backend = FakeBackend()
             backend.workspace = Path(folder)
-            app = make_app("fake", backend, url)
+            app = make_app("fake", backend, url, publish_credential=True)
             server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port,
                                                    log_level="error"))
             running = asyncio.create_task(server.serve())
@@ -327,6 +327,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(0.03)
                     else:
                         self.fail("A2A server did not start")
+                    http.headers["Authorization"] = "Bearer " + app.state.local_credential.token
                     identity = (await http.get(url + "/bridge/identity")).json()
                     self.assertEqual(identity["runtime_context"], "worker")
                     self.assertFalse(identity["dispatch_enabled"])

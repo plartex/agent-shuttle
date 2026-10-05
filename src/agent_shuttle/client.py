@@ -7,6 +7,7 @@ import logging
 import math
 import json
 import uuid
+import hmac
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import monotonic
@@ -25,9 +26,12 @@ from a2a.utils.errors import TaskNotCancelableError
 from .profiles import ToolPolicy
 from .structured import encode_output_schema
 from .runtime_context import require_coordinator
+from .local_auth import (PeerAuthenticationError, local_origin, new_nonce,
+                         read_local_credential)
 
 
 log = logging.getLogger(__name__)
+_DEFAULT_TIMEOUT = object()
 
 
 @dataclass(frozen=True)
@@ -115,8 +119,45 @@ class TaskHandle:
 
 
 class BridgeClient:
-    def __init__(self, timeout_seconds: float = 1800):
+    def __init__(self, timeout_seconds: float = 1800, *, credentials: dict[str, str] | None = None):
         self.timeout_seconds = timeout_seconds
+        self.credentials = credentials or {}
+
+    async def _http(self, peer_url: str, *, timeout: float | None | object = _DEFAULT_TIMEOUT) -> httpx.AsyncClient:
+        """Authenticate a fresh connection before adding any secret header."""
+        origin = peer_url.rstrip("/")
+        record = read_local_credential(origin)
+        token = self.credentials.get(origin)
+        if local_origin(origin) is not None and record is None and token is None:
+            raise PeerAuthenticationError(
+                f"No protected credential for {origin}; update the client and restart "
+                "an old unprotected server"
+            )
+        if record is not None:
+            nonce = new_nonce()
+            try:
+                async with httpx.AsyncClient(timeout=min(self.timeout_seconds, 10),
+                                             trust_env=False) as probe:
+                    response = await probe.get(origin + "/bridge/proof", params={"nonce": nonce})
+                    response.raise_for_status()
+                    proof = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise PeerAuthenticationError(
+                    f"Peer at {origin} did not provide a valid local credential proof"
+                ) from exc
+            if not isinstance(proof, dict):
+                raise PeerAuthenticationError(f"Peer at {origin} returned an invalid proof")
+            if (proof.get("origin") != record.origin
+                    or proof.get("instance_id") != record.instance_id
+                    or not isinstance(proof.get("signature"), str)
+                    or not hmac.compare_digest(proof["signature"], record.signature(nonce))):
+                raise PeerAuthenticationError(f"Peer at {origin} failed local credential proof")
+            if token is not None and not hmac.compare_digest(token, record.token):
+                raise PeerAuthenticationError(f"Explicit credential for {origin} does not match the local record")
+            token = record.token
+        headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
+        return httpx.AsyncClient(timeout=self.timeout_seconds if timeout is _DEFAULT_TIMEOUT else timeout,
+                                 headers=headers, trust_env=local_origin(origin) is None)
 
     def task(self, peer_url: str, task_id: str) -> TaskHandle:
         """Reopen a live-server task using the ID returned by submit()."""
@@ -125,7 +166,7 @@ class BridgeClient:
         return TaskHandle(self, peer_url, task_id, None)
 
     async def _get(self, peer_url: str, path: str) -> dict:
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
+        async with await self._http(peer_url) as http:
             response = await http.get(peer_url.rstrip("/") + path)
             response.raise_for_status()
             return response.json()
@@ -142,6 +183,11 @@ class BridgeClient:
                 timeout=min(self.timeout_seconds, 10.0),
             )
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                raise PeerAuthenticationError(
+                    f"Bridge at {peer_url} requires Bearer authentication; update the client "
+                    "and restart an old unprotected server"
+                ) from exc
             if exc.response.status_code == 404:
                 raise ValueError(
                     f"Bridge at {peer_url} lacks /bridge/identity; restart it with the current version"
@@ -169,7 +215,7 @@ class BridgeClient:
 
     async def close_session(self, peer_url: str, session_id: str) -> bool:
         require_coordinator()
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
+        async with await self._http(peer_url) as http:
             response = await http.delete(
                 peer_url.rstrip("/") + "/bridge/sessions/" + str(uuid.UUID(session_id))
             )
@@ -191,7 +237,7 @@ class BridgeClient:
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
         )
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
+        async with await self._http(peer_url) as http:
             client = await create_client(
                 peer_url.rstrip("/"),
                 ClientConfig(streaming=False, httpx_client=http),
@@ -212,7 +258,7 @@ class BridgeClient:
         return _task_result(peer_url, await self._raw_task_call(peer_url, method, request))
 
     async def _raw_task_call(self, peer_url: str, method: str, request):
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
+        async with await self._http(peer_url) as http:
             client = await create_client(
                 peer_url.rstrip("/"),
                 ClientConfig(streaming=False, httpx_client=http),
@@ -279,7 +325,7 @@ class BridgeClient:
             raise
 
     async def task_events(self, peer_url: str, task_id: str) -> AsyncIterator[BridgeEvent]:
-        async with httpx.AsyncClient(timeout=None) as http:
+        async with await self._http(peer_url, timeout=None) as http:
             client = await create_client(
                 peer_url.rstrip("/"),
                 ClientConfig(streaming=True, httpx_client=http),

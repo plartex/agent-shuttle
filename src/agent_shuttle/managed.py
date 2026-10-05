@@ -8,9 +8,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import socket
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import AsyncIterator
 from urllib.parse import urlparse
@@ -18,6 +19,8 @@ from urllib.parse import urlparse
 from .client import BridgeClient
 from .discovery import discover_harnesses
 from .profiles import AgentProfile
+from .local_auth import PeerAuthenticationError
+from .process_lifecycle import owns_pid, spawn_options, stop_sync_process
 
 
 _BACKENDS = {
@@ -25,6 +28,7 @@ _BACKENDS = {
     "antigravity": {"agy_cli", "antigravity_sdk"},
     "opencode": {"opencode"},
     "claude_code": {"claude_code"},
+    "acp": {"acp"},
 }
 
 
@@ -35,23 +39,7 @@ def _trace(stage: str) -> None:
 
 
 async def _stop_process_tree(process: subprocess.Popen) -> None:
-    """Reap the venv launcher and its Python child before deleting Windows logs."""
-    if os.name == "nt" and process.poll() is None:
-        try:
-            await asyncio.to_thread(
-                subprocess.run,
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                capture_output=True, timeout=10, check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            _trace(f"taskkill failed ({type(exc).__name__})")
-    if process.poll() is None:
-        process.terminate()
-    try:
-        await asyncio.to_thread(process.wait, timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        await asyncio.to_thread(process.wait)
+    await stop_sync_process(process)
 
 
 @dataclass(frozen=True)
@@ -107,16 +95,21 @@ def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
         actual = Path(reported).resolve(strict=True)
     except OSError as exc:
         raise HarnessConfigurationMismatch(f"{launch.url} reported an inaccessible workspace") from exc
-    if os.path.normcase(str(actual)) != os.path.normcase(str(expected)):
+    if not actual.samefile(expected):
         raise HarnessConfigurationMismatch(f"{launch.url} workspace {actual} does not match {expected}")
+    pid = info.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        raise HarnessConfigurationMismatch(f"{launch.url} did not report a valid process ID")
     if launch.task_db is not None:
         reported_db = info.get("task_db_path")
         if (info.get("task_storage") != "sqlite" or not isinstance(reported_db, str)
-                or os.path.normcase(str(Path(reported_db).resolve())) != os.path.normcase(str(launch.task_db.resolve()))):
+                or not Path(reported_db).is_file()
+                or not Path(reported_db).samefile(launch.task_db)):
             raise HarnessConfigurationMismatch(f"{launch.url} does not use the requested persistent task database")
-    if launch.tool_policy == "read_only" and info.get("read_only_tools") is not True:
+    advisory = launch.name == "acp" and info.get("tool_policy_enforcement") == "advisory"
+    if launch.tool_policy == "read_only" and info.get("read_only_tools") is not True and not advisory:
         raise HarnessConfigurationMismatch(f"{launch.url} cannot confirm read-only tools")
-    policies = info.get("supported_tool_policies")
+    policies = info.get("advisory_tool_policies") if advisory else info.get("supported_tool_policies")
     if launch.tool_policy is not None and isinstance(policies, list) and launch.tool_policy not in policies:
         raise HarnessConfigurationMismatch(f"{launch.url} cannot enforce {launch.tool_policy}")
     if launch.name == "antigravity":
@@ -141,6 +134,17 @@ def _local_port(url: str) -> int:
     if port is None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
         raise ValueError("Temporary Bridge URL must contain only a host and port")
     return port
+
+
+def _port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _available_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
 
 
 @asynccontextmanager
@@ -168,6 +172,12 @@ async def connect_harness(
     _trace("checking existing server")
     try:
         _verify_connection(launch, await identify(launch.url))
+    except PeerAuthenticationError as exc:
+        if not launch.start_if_missing:
+            raise HarnessConfigurationMismatch(str(exc)) from exc
+        if _port_in_use(_local_port(launch.url)):
+            launch = replace(launch, url=f"http://127.0.0.1:{_available_port()}")
+            _trace(f"untrusted occupied port; using {launch.url}")
     except ValueError:
         raise
     except Exception as exc:
@@ -183,8 +193,8 @@ async def connect_harness(
     if not workspace.is_dir():
         raise ValueError("workspace must be a directory")
     profile_path = launch.profile_path.resolve(strict=True) if launch.profile_path else None
-    if profile_path is not None and launch.name not in {"opencode", "claude_code"}:
-        raise ValueError("Profiles are supported only for OpenCode and Claude Code")
+    if profile_path is not None and launch.name not in {"opencode", "claude_code", "acp"}:
+        raise ValueError("Profiles are supported only for OpenCode, Claude Code and ACP")
     if profile_path is not None and launch.tool_policy is not None:
         AgentProfile.from_file(profile_path, workspace_override=workspace).resolve(
             launch.model, None, launch.tool_policy,
@@ -227,6 +237,7 @@ async def connect_harness(
             process = subprocess.Popen(
                 argv, cwd=workspace, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT,
+                **spawn_options(),
             )
             _trace(f"temporary server pid={process.pid}")
             try:
@@ -241,7 +252,12 @@ async def connect_harness(
                             f"log tail: {log_path.read_text(encoding='utf-8', errors='replace')[-2000:]}"
                         )
                     try:
-                        _verify_connection(launch, await identify(launch.url))
+                        info = await identify(launch.url)
+                        _verify_connection(launch, info)
+                        if not owns_pid(process.pid, info["pid"]):
+                            raise HarnessConfigurationMismatch(
+                                f"{launch.url} belongs to PID {info['pid']}, not launched PID {process.pid}"
+                            )
                         _trace("temporary server identity verified")
                         break
                     except ValueError:
@@ -258,5 +274,4 @@ async def connect_harness(
                     )
                 yield BridgeConnection(launch.url, started=True, log_path=log_path)
             finally:
-                if process.poll() is None:
-                    await _stop_process_tree(process)
+                await _stop_process_tree(process)

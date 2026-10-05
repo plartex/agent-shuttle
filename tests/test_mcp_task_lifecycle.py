@@ -36,7 +36,7 @@ class McpTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
             url = f"http://127.0.0.1:{port}"
             backend = FakeAntigravity(Path(folder))
             store = SQLiteTaskStore(Path(folder) / ".agent-shuttle" / "tasks-antigravity.sqlite3")
-            server = uvicorn.Server(uvicorn.Config(make_app("antigravity", backend, url, task_store=store),
+            server = uvicorn.Server(uvicorn.Config(make_app("antigravity", backend, url, task_store=store, publish_credential=True),
                                                    host="127.0.0.1", port=port, log_level="error"))
             running = asyncio.create_task(server.serve())
             while not server.started:
