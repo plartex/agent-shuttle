@@ -28,16 +28,26 @@ It allows agents and external applications to delegate tasks to peer agents, reu
 
 ## Installation
 
-Agent Shuttle requires **Python 3.11+** and runs on Windows, Linux, and macOS.
+Agent Shuttle runs on Windows, Linux, and macOS. For the command-line tools and MCP server, install [uv](https://docs.astral.sh/uv/getting-started/installation/) first; uv can obtain a compatible Python automatically.
 
-### Install from GitHub
+### Install the commands and MCP server
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install "git+https://github.com/Plartex/agent-shuttle.git"
+```text
+uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool dir --bin
 ```
 
-The package is not published on PyPI yet. For development, clone the repository and install it in editable mode.
+The package is not published on PyPI yet. The last command shows where uv placed `agent-shuttle-mcp` (with `.exe` on Windows); use its absolute path in your MCP client's configuration. To use `agent-shuttle` directly in a shell, run `uv tool update-shell` if the command is not on `PATH`, then open a new shell. After a verified PyPI release, the install command will be `uv tool install agent-shuttle`.
+
+To check local harness availability, run `agent-shuttle discover`; it does not authenticate or send a model request. `agent-shuttle doctor <agent> --smoke` checks a real model turn when needed. MCP already provides `ask_agent` for supported harnesses and configured profiles.
+
+### Use the Python library in another project
+
+```text
+uv add git+https://github.com/Plartex/agent-shuttle.git
+```
+
+`uv tool install` isolates the tool from your project's Python environment. Install Agent Shuttle as a project dependency when your code imports `agent_shuttle`. After a verified PyPI release, use `uv add agent-shuttle`.
 
 ### Install from Local Checkout
 
@@ -60,17 +70,16 @@ The distribution has one Python package: `src/agent_shuttle/`. This is the stand
 
 ---
 
-## Quickstart (Windows PowerShell)
+## Quickstart
 
-Use standard Python packaging, including when developing from a checkout:
+Install the MCP server, then give your MCP client its absolute executable path:
 
-```powershell
-python -m venv .venv
-& .\.venv\Scripts\python.exe -m pip install -e .
-& .\.venv\Scripts\agent-shuttle.exe discover
+```text
+uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool dir --bin
 ```
 
-Point your MCP client's `command` at the installed `.venv\Scripts\agent-shuttle-mcp.exe` (use its absolute path). MCP starts a local A2A peer when a request needs one; there is no separate server startup step. See the [getting started guide](docs/getting-started.md) for MCP configuration.
+Point your MCP client's `command` at `agent-shuttle-mcp` in the printed directory. MCP starts a local A2A peer when a request needs one; there is no separate server startup step. See the [getting started guide](docs/getting-started.md) for MCP configuration and harness setup.
 
 For a persistent server, run `agent-shuttle serve codex --workspace . --port 8765` (or `serve antigravity` on port 8766) in a terminal and stop it with Ctrl+C.
 
