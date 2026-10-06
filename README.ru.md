@@ -33,21 +33,21 @@ Agent Shuttle работает на Windows, Linux и macOS. Для команд
 ### Установка команд и MCP-сервера
 
 ```text
-uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool install agent-shuttle
 uv tool dir --bin
 ```
 
-Пакет пока не опубликован в PyPI. Последняя команда показывает каталог с `agent-shuttle-mcp` (на Windows — с расширением `.exe`); абсолютный путь к нему укажите в конфигурации MCP-клиента. Чтобы пользоваться `agent-shuttle` из терминала, при необходимости выполните `uv tool update-shell` и откройте новый терминал. После проверенной публикации в PyPI команда установки станет `uv tool install agent-shuttle`.
+Последняя команда показывает каталог с `agent-shuttle-mcp` (на Windows — с расширением `.exe`); абсолютный путь к нему укажите в конфигурации MCP-клиента. Чтобы пользоваться `agent-shuttle` из терминала, при необходимости выполните `uv tool update-shell` и откройте новый терминал.
 
 Для диагностики локальных харнессов можно запустить `agent-shuttle discover`: команда не проверяет авторизацию и не обращается к модели. `agent-shuttle doctor <agent> --smoke` при необходимости проверяет реальный ход модели. В MCP уже есть `ask_agent` для поддерживаемых харнессов и настроенных профилей.
 
 ### Использование как Python-библиотеки в другом проекте
 
 ```text
-uv add git+https://github.com/Plartex/agent-shuttle.git
+uv add agent-shuttle
 ```
 
-`uv tool install` устанавливает инструмент отдельно от Python-окружения проекта. Если ваш код импортирует `agent_shuttle`, добавьте пакет как зависимость проекта. После проверенной публикации в PyPI используйте `uv add agent-shuttle`.
+`uv tool install` устанавливает инструмент отдельно от Python-окружения проекта. Если ваш код импортирует `agent_shuttle`, добавьте пакет как зависимость проекта.
 
 ### Установка из локального чекаута
 
@@ -75,7 +75,7 @@ pip install C:\path\to\agent-shuttle
 Установите MCP-сервер и получите каталог его исполняемого файла:
 
 ```text
-uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool install agent-shuttle
 uv tool dir --bin
 ```
 
