@@ -58,10 +58,9 @@ class LibraryTasksTests(unittest.IsolatedAsyncioTestCase):
         self.database = self.root / "tasks.sqlite3"
         self.backend = FakeBackend()
 
-    def manager(self, *, execution_timeout_seconds=120):
+    def manager(self):
         return TaskManager({"fake": self.backend}, workspace=self.root,
-                           database=self.database,
-                           execution_timeout_seconds=execution_timeout_seconds)
+                           database=self.database, execution_timeout_seconds=120)
 
     async def test_python_api_dispatch_wait_result_and_persistence_without_transports(self):
         request_id = str(uuid.uuid4())
@@ -98,10 +97,10 @@ class LibraryTasksTests(unittest.IsolatedAsyncioTestCase):
                 await session.dispatch("three")
 
     async def test_wait_budget_does_not_cancel_and_explicit_cancel_does(self):
-        async with self.manager(execution_timeout_seconds=300) as manager:
+        async with self.manager() as manager:
             task = await manager.dispatch("fake", "wait")
             self.assertIn((await task.wait(0.01)).state, {"submitted", "working"})
-            canceled = await asyncio.wait_for(task.cancel(), timeout=10)
+            canceled = await task.cancel()
             self.assertEqual(canceled.state, "canceled", canceled.error)
             self.assertEqual((await task.cancel()).state, "canceled")
 
