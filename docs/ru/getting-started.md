@@ -31,13 +31,13 @@ Agent Shuttle взаимодействует с локальными агент�
 На Windows, macOS или Linux установите [uv](https://docs.astral.sh/uv/getting-started/installation/) и выполните:
 
 ```text
-uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool install agent-shuttle
 uv tool dir --bin
 ```
 
-Agent Shuttle пока не опубликован в PyPI. Последняя команда выводит каталог с `agent-shuttle-mcp` (на Windows — `agent-shuttle-mcp.exe`). Укажите абсолютный путь к файлу в конфигурации MCP-клиента и используйте существующий инструмент `ask_agent`. При необходимости клиент сам запускает временный локальный A2A-сервер. Чтобы пользоваться `agent-shuttle` из терминала, при необходимости выполните `uv tool update-shell` и откройте новый терминал.
+Последняя команда выводит каталог с `agent-shuttle-mcp` (на Windows — `agent-shuttle-mcp.exe`). Укажите абсолютный путь к файлу в конфигурации MCP-клиента и используйте существующий инструмент `ask_agent`. При необходимости клиент сам запускает временный локальный A2A-сервер. Чтобы пользоваться `agent-shuttle` из терминала, при необходимости выполните `uv tool update-shell` и откройте новый терминал.
 
-Для импорта из другого Python-проекта под управлением uv выполните в нём `uv add git+https://github.com/Plartex/agent-shuttle.git`. Окружение `uv tool install` изолировано от импортов проекта. После проверенного релиза в PyPI команды станут `uv tool install agent-shuttle` и `uv add agent-shuttle`.
+Для импорта из другого Python-проекта под управлением uv выполните в нём `uv add agent-shuttle`. Окружение `uv tool install` изолировано от импортов проекта.
 
 Для диагностики поиска исполняемых файлов можно запустить `agent-shuttle discover`, а после входа в аккаунт — `agent-shuttle doctor <agent> --smoke` для проверки хода модели. Для самой установки эти команды не требуются.
 

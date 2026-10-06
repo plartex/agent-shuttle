@@ -33,21 +33,21 @@ Agent Shuttle runs on Windows, Linux, and macOS. For the command-line tools and 
 ### Install the commands and MCP server
 
 ```text
-uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool install agent-shuttle
 uv tool dir --bin
 ```
 
-The package is not published on PyPI yet. The last command shows where uv placed `agent-shuttle-mcp` (with `.exe` on Windows); use its absolute path in your MCP client's configuration. To use `agent-shuttle` directly in a shell, run `uv tool update-shell` if the command is not on `PATH`, then open a new shell. After a verified PyPI release, the install command will be `uv tool install agent-shuttle`.
+The last command shows where uv placed `agent-shuttle-mcp` (with `.exe` on Windows); use its absolute path in your MCP client's configuration. To use `agent-shuttle` directly in a shell, run `uv tool update-shell` if the command is not on `PATH`, then open a new shell.
 
 To check local harness availability, run `agent-shuttle discover`; it does not authenticate or send a model request. `agent-shuttle doctor <agent> --smoke` checks a real model turn when needed. MCP already provides `ask_agent` for supported harnesses and configured profiles.
 
 ### Use the Python library in another project
 
 ```text
-uv add git+https://github.com/Plartex/agent-shuttle.git
+uv add agent-shuttle
 ```
 
-`uv tool install` isolates the tool from your project's Python environment. Install Agent Shuttle as a project dependency when your code imports `agent_shuttle`. After a verified PyPI release, use `uv add agent-shuttle`.
+`uv tool install` isolates the tool from your project's Python environment. Install Agent Shuttle as a project dependency when your code imports `agent_shuttle`.
 
 ### Install from Local Checkout
 
@@ -75,7 +75,7 @@ The distribution has one Python package: `src/agent_shuttle/`. This is the stand
 Install the MCP server, then give your MCP client its absolute executable path:
 
 ```text
-uv tool install git+https://github.com/Plartex/agent-shuttle.git
+uv tool install agent-shuttle
 uv tool dir --bin
 ```
 
