@@ -33,10 +33,12 @@ class FakeBackend:
         self.calls = []
         self.sessions = []
         self.release = asyncio.Event()
+        self.started = asyncio.Event()
 
     async def run(self, prompt, model=None, *, reasoning_effort=None,
                   read_only=False, tool_policy=None, on_event=None):
         self.calls.append(prompt)
+        self.started.set()
         if on_event:
             await on_event({"kind": "progress", "text": "started"})
         if prompt == "wait":
@@ -100,9 +102,21 @@ class LibraryTasksTests(unittest.IsolatedAsyncioTestCase):
         async with self.manager() as manager:
             task = await manager.dispatch("fake", "wait")
             self.assertIn((await task.wait(0.01)).state, {"submitted", "working"})
-            canceled = await task.cancel()
+            canceled = await asyncio.wait_for(task.cancel(), 5)
             self.assertEqual(canceled.state, "canceled", canceled.error)
             self.assertEqual((await task.cancel()).state, "canceled")
+
+    async def test_cancel_before_backend_starts(self):
+        async with self.manager() as manager:
+            task = await manager.dispatch("fake", "wait")
+            self.assertEqual((await asyncio.wait_for(task.cancel(), 5)).state, "canceled")
+            self.assertEqual(self.backend.calls, [])
+
+    async def test_cancel_running_backend(self):
+        async with self.manager() as manager:
+            task = await manager.dispatch("fake", "wait")
+            await asyncio.wait_for(self.backend.started.wait(), 5)
+            self.assertEqual((await asyncio.wait_for(task.cancel(), 5)).state, "canceled")
 
     async def test_parallel_turns_share_one_native_session_and_cancel_invalidates_it(self):
         async with self.manager() as manager:
