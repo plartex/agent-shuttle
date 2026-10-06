@@ -64,7 +64,7 @@ def _offered(options: list[dict], key: str) -> tuple[str | None, set[str], str |
 class _Client:
     def __init__(self, selection: ProfileSelection, workspace: Path):
         self.selection = selection
-        self.workspace = workspace
+        self.workspace = workspace.resolve(strict=True)
         self.parts: list[str] = []
         self.events = None
 
