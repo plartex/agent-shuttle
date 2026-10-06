@@ -1,5 +1,7 @@
 # Agent Shuttle API Reference
 
+Isolated task changes, `ChangeSet`, and MCP tools are documented in the [isolated workspaces guide](isolated-workspaces.md).
+
 [Russian version / Русская версия](ru/api.md)
 
 This document provides a comprehensive reference for the unified public Python API, HTTP endpoints, CLI commands, and Model Context Protocol (MCP) tools provided by Agent Shuttle.

@@ -63,7 +63,8 @@ class TaskGateway:
         self.peers[key] = (launch, peer)
         return launch, peer
 
-    async def submit(self, launch, prompt, model, reasoning_effort, request_id):
+    async def submit(self, launch, prompt, model, reasoning_effort, request_id,
+                     workspace_mode="shared"):
         require_coordinator()
         async with self.lock:
             if self.closed:
@@ -72,7 +73,8 @@ class TaskGateway:
             launch = replace(launch, task_db=launch.workspace / ".agent-shuttle" / f"tasks-{launch.name}.sqlite3")
             active, peer = await self._peer(launch)
             handle = await self.client.submit(peer.url, prompt, model, reasoning_effort=reasoning_effort,
-                                              tool_policy=launch.tool_policy, request_id=request_id)
+                                              tool_policy=launch.tool_policy, request_id=request_id,
+                                              workspace_mode=workspace_mode)
             self.jobs[handle.task_id] = {"launch": asdict(active), "context_id": handle.context_id}
             self._save()
             return {"task_id": handle.task_id, "context_id": handle.context_id, "peer": peer.url}

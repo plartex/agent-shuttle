@@ -266,13 +266,21 @@ class BridgeExecutor(AgentExecutor):
             except (TypeError, ValueError) as exc:
                 await updater.update_status(TaskState.TASK_STATE_REJECTED, new_text_message(str(exc)))
                 return
+        workspace_mode = (context.message.metadata["agent_shuttle.workspace_mode"]
+                          if "agent_shuttle.workspace_mode" in context.message.metadata else "shared")
+        if workspace_mode not in {"shared", "isolated"}:
+            await updater.update_status(TaskState.TASK_STATE_REJECTED,
+                                        new_text_message("Invalid workspace_mode"))
+            return
         await self._execute_library(task, updater, prompt, model, reasoning_effort,
                                     tool_policy or ("read_only" if read_only else None), session_id,
                                     (context.message.metadata["agent_bridge.request_id"]
-                                     if "agent_bridge.request_id" in context.message.metadata else None), output_schema)
+                                     if "agent_bridge.request_id" in context.message.metadata else None),
+                                    output_schema, workspace_mode)
 
     async def _execute_library(self, task, updater, prompt, model, reasoning_effort,
-                               tool_policy, session_id, request_id, output_schema=None):
+                               tool_policy, session_id, request_id, output_schema=None,
+                               workspace_mode="shared"):
         manager = self.task_manager
         assert manager is not None and self.agent_id is not None
 
@@ -290,6 +298,7 @@ class BridgeExecutor(AgentExecutor):
                                                reasoning_effort=reasoning_effort,
                                                tool_policy=tool_policy, session_id=session_id,
                                                output_schema=output_schema,
+                                               workspace_mode=workspace_mode,
                                                request_id=request_id, task_id=task.id,
                                                event_sink=on_event)
         except Exception as exc:
@@ -310,6 +319,9 @@ class BridgeExecutor(AgentExecutor):
             metadata["agent_bridge.usage"] = result.usage
         if result.details:
             metadata["agent_bridge.details"] = result.details
+        changes = await core_task.changes()
+        if changes is not None:
+            metadata["agent_shuttle.change"] = await changes.info()
         if result.state == "completed":
             await updater.add_artifact([new_text_part(result.text, media_type="text/plain")],
                                        name="result", metadata=metadata or None)
@@ -320,7 +332,8 @@ class BridgeExecutor(AgentExecutor):
                                         new_text_message(f"{error.get('type', 'Error')}: {error['message']}"),
                                         metadata={**metadata, "agent_bridge.error": error})
         elif result.state == "canceled":
-            await updater.update_status(TaskState.TASK_STATE_CANCELED)
+            await updater.update_status(TaskState.TASK_STATE_CANCELED,
+                                        metadata=metadata or None)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         # The A2A active-task manager cancels and joins the producer after this
@@ -389,7 +402,8 @@ class _IdempotentRequestHandler(DefaultRequestHandler):
 def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider | None = None,
              *, task_store=None, execution_timeout_seconds: float = 1800,
              stall_timeout_seconds: float = 1800,
-             credential: LocalCredential | None = None, publish_credential: bool = False) -> Starlette:
+             credential: LocalCredential | None = None, publish_credential: bool = False,
+             backend_factory=None) -> Starlette:
     for budget in (execution_timeout_seconds, stall_timeout_seconds):
         if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget <= 0:
             raise ValueError("worker budgets must be positive finite numbers")
@@ -430,6 +444,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         backend_workspace = Path.cwd()
     manager = TaskManager({name: backend}, workspace=backend_workspace,
                           database=library_database, memory=library_database is None,
+                          backend_factories={name: backend_factory} if backend_factory else None,
                           execution_timeout_seconds=execution_timeout_seconds,
                           stall_timeout_seconds=stall_timeout_seconds)
     executor = BridgeExecutor(manager, name)
@@ -487,6 +502,9 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                 ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS,
             }
         )
+        result["workspace_modes"] = (["shared", "isolated"]
+                                     if backend_factory and manager._enforces_workspace(name)
+                                     else ["shared"])
         if isinstance(backend, AntigravityCliBackend):
             result["supported_tool_policies"] = ["no_tools", "read_only", "workspace_write"]
             result["tool_policy_enforcement"] = "agy_pre_tool_use"
@@ -544,6 +562,41 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             closed = False
         return JSONResponse({"closed": closed})
 
+    async def change_info(request):
+        try:
+            return JSONResponse(await manager.change_info(request.path_params["task_id"]))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def change_diff(request):
+        try:
+            cursor = int(request.query_params.get("cursor", "0"))
+            limit = int(request.query_params.get("limit", "60000"))
+            return JSONResponse(await manager.change_diff(request.path_params["task_id"], cursor, limit))
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def apply_change(request):
+        try:
+            body = await request.json()
+            return JSONResponse(await manager.apply_change(
+                request.path_params["task_id"], body["expected_revision"],
+                allow_partial=body.get("allow_partial", False)))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+
+    async def discard_change(request):
+        try:
+            return JSONResponse(await manager.discard_change(request.path_params["task_id"]))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+
     @asynccontextmanager
     async def lifespan(app):
         check_ready = getattr(info_provider, "check_ready", None)
@@ -596,6 +649,10 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             Route("/bridge/capabilities", bridge_info),
             Route("/bridge/usage", bridge_info),
             Route("/bridge/sessions/{session_id}", close_session, methods=["DELETE"]),
+            Route("/bridge/tasks/{task_id}/changes", change_info),
+            Route("/bridge/tasks/{task_id}/diff", change_diff),
+            Route("/bridge/tasks/{task_id}/apply", apply_change, methods=["POST"]),
+            Route("/bridge/tasks/{task_id}/changes", discard_change, methods=["DELETE"]),
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(handler, "/"),
         ]

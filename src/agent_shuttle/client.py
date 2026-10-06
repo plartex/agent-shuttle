@@ -114,6 +114,19 @@ class TaskHandle:
     async def result_page(self, cursor: int = 0, limit: int = 60000) -> dict:
         return await self.client.task_result_page(self.peer_url, self.task_id, cursor, limit)
 
+    async def changes(self) -> dict:
+        return await self.client.task_changes(self.peer_url, self.task_id)
+
+    async def diff(self, cursor: int = 0, limit: int = 60000) -> dict:
+        return await self.client.task_diff(self.peer_url, self.task_id, cursor, limit)
+
+    async def apply_changes(self, expected_revision: str, *, allow_partial: bool = False) -> dict:
+        return await self.client.apply_task_changes(self.peer_url, self.task_id,
+                                                    expected_revision, allow_partial=allow_partial)
+
+    async def discard_changes(self) -> dict:
+        return await self.client.discard_task_changes(self.peer_url, self.task_id)
+
     async def transcript(self, cursor: int = 0, limit: int = 100) -> dict:
         return await self.client.task_transcript(self.peer_url, self.task_id, cursor, limit)
 
@@ -228,11 +241,13 @@ class BridgeClient:
         tool_policy: str | None = None, session_id: str | None = None,
         request_id: str | None = None,
         output_schema: dict | None = None,
+        workspace_mode: str = "shared",
     ) -> TaskHandle:
         """Start an A2A task and return its handle before the agent finishes."""
         require_coordinator()
         message = _request_message(prompt, model, reasoning_effort, read_only,
-                                   tool_policy, session_id, request_id, output_schema)
+                                   tool_policy, session_id, request_id, output_schema,
+                                   workspace_mode)
         request = SendMessageRequest(
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
@@ -283,6 +298,38 @@ class BridgeClient:
         return {"task_id": task_id, "state": result.state, "text": result.text[cursor:end],
                 "next_cursor": end if end < len(result.text) else None, "total_size": len(result.text),
                 "usage": result.usage, "details": result.details, "error": result.error}
+
+    async def task_changes(self, peer_url: str, task_id: str) -> dict:
+        return await self._get(peer_url, f"/bridge/tasks/{uuid.UUID(task_id)}/changes")
+
+    async def task_diff(self, peer_url: str, task_id: str, cursor: int = 0,
+                        limit: int = 60000) -> dict:
+        _validate_page(cursor, limit, 60000)
+        async with await self._http(peer_url) as http:
+            response = await http.get(peer_url.rstrip("/") +
+                                      f"/bridge/tasks/{uuid.UUID(task_id)}/diff",
+                                      params={"cursor": cursor, "limit": limit})
+            response.raise_for_status()
+            return response.json()
+
+    async def apply_task_changes(self, peer_url: str, task_id: str,
+                                 expected_revision: str, *, allow_partial: bool = False) -> dict:
+        require_coordinator()
+        async with await self._http(peer_url) as http:
+            response = await http.post(peer_url.rstrip("/") +
+                                       f"/bridge/tasks/{uuid.UUID(task_id)}/apply",
+                                       json={"expected_revision": expected_revision,
+                                             "allow_partial": allow_partial})
+            response.raise_for_status()
+            return response.json()
+
+    async def discard_task_changes(self, peer_url: str, task_id: str) -> dict:
+        require_coordinator()
+        async with await self._http(peer_url) as http:
+            response = await http.delete(peer_url.rstrip("/") +
+                                         f"/bridge/tasks/{uuid.UUID(task_id)}/changes")
+            response.raise_for_status()
+            return response.json()
 
     async def task_transcript(self, peer_url: str, task_id: str, cursor: int = 0, limit: int = 100) -> dict:
         _validate_page(cursor, limit, 100)
@@ -470,7 +517,7 @@ def _validate_page(cursor, limit, maximum):
 
 
 def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, session_id,
-                     request_id=None, output_schema=None):
+                     request_id=None, output_schema=None, workspace_mode="shared"):
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("prompt must contain text")
     if model is not None and (not isinstance(model, str) or not model.strip()):
@@ -486,6 +533,8 @@ def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, se
             raise ValueError("tool_policy must be no_tools, read_only, workspace_write, or full_access") from exc
         if read_only and tool_policy != ToolPolicy.READ_ONLY.value:
             raise ValueError("read_only conflicts with tool_policy")
+    if workspace_mode not in {"shared", "isolated"}:
+        raise ValueError("workspace_mode must be shared or isolated")
     if session_id is not None:
         session_id = str(uuid.UUID(session_id))
     if request_id is not None:
@@ -502,6 +551,8 @@ def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, se
         message.metadata["agent_bridge.read_only"] = True
     if tool_policy is not None:
         message.metadata["agent_bridge.tool_policy"] = tool_policy
+    if workspace_mode != "shared":
+        message.metadata["agent_shuttle.workspace_mode"] = workspace_mode
     if session_id is not None:
         message.metadata["agent_bridge.session_id"] = session_id
     schema = encode_output_schema(output_schema)
