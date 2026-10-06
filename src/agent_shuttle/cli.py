@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import socket
+from dataclasses import replace
 from pathlib import Path
 
 import uvicorn
@@ -124,6 +125,7 @@ def main() -> None:
         profile = AgentProfile.from_file(args.profile, workspace_override=args.workspace)
         backend, info_provider = build_profile(profile)
         name = profile.id
+        backend_factory = lambda path: build_profile(replace(profile, workspace=path))[0]
     else:
         if args.profile is not None:
             parser.error("--profile is only valid with serve profile")
@@ -138,6 +140,12 @@ def main() -> None:
             dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
             turn_timeout_seconds=args.agy_turn_timeout_seconds or 300,
         )
+        backend_factory = lambda path: build_builtin(
+            args.agent, path, command=args.agy_command, mode=args.agy_mode,
+            python=args.agy_python,
+            dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
+            turn_timeout_seconds=args.agy_turn_timeout_seconds or 300,
+        )[0]
     url = f"http://127.0.0.1:{args.port}"
     store = None
     if args.task_db is not None:
@@ -146,6 +154,7 @@ def main() -> None:
     app = make_app(name, backend, url, info_provider, task_store=store,
                    execution_timeout_seconds=args.execution_timeout_seconds,
                    stall_timeout_seconds=args.stall_timeout_seconds,
+                   backend_factory=backend_factory,
                    publish_credential=True)
     _run_server(app, args.port)
 

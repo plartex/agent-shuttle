@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult, ResourceLink, TextContent
 
 from .client import BridgeClient
 from .managed import HarnessConfigurationMismatch, HarnessLaunch, connect_harness
@@ -70,6 +71,8 @@ mcp = FastMCP(
         "Use ask_agent for Codex, Antigravity, OpenCode, Claude Code, or configured profiles. "
         "For long tasks use submit_task, then check_task/wait_task; obtain paged output with "
         "get_result/get_transcript. A wait timeout does not cancel execution; cancel_task does. "
+        "For isolated file edits explicitly set workspace_mode=isolated and workspace_write. "
+        "Review get_task_changes/get_task_diff before calling apply_task_changes; changes are never applied automatically. "
         "A Bridge inherited inside a worker rejects new tasks and task cancellation. "
         "The legacy ask_antigravity and ask_codex tools remain available. "
         "Use get_antigravity_info or get_codex_info to check current models, efforts and account quotas. "
@@ -272,7 +275,8 @@ async def ask_codex(
 @mcp.tool()
 async def submit_task(agent_id: str, prompt: str, model: str | None = None,
                       reasoning_effort: str | None = None, tool_policy: str | None = None,
-                      workspace: str | None = None, request_id: str | None = None) -> dict:
+                      workspace: str | None = None, request_id: str | None = None,
+                      workspace_mode: str = "shared") -> dict:
     """Start work and return a task ticket immediately; choose the least sufficient tool policy.
 
     The managed peer remains alive between calls. Reuse request_id for submission retries.
@@ -280,7 +284,54 @@ async def submit_task(agent_id: str, prompt: str, model: str | None = None,
     """
     require_coordinator()
     launch = _agent_launch(agent_id, workspace, model, tool_policy)
-    return await _gateway().submit(launch, prompt, model, reasoning_effort, request_id)
+    return await _gateway().submit(launch, prompt, model, reasoning_effort, request_id,
+                                   workspace_mode)
+
+
+@mcp.tool()
+async def get_task_changes(task_id: str) -> CallToolResult:
+    """Describe an isolated task's saved changes; no files are modified."""
+    info = await (await _gateway().handle(task_id)).changes()
+    uri = f"agent-shuttle://tasks/{task_id}/diff"
+    data = {**info, "resource_uri": uri}
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(data, ensure_ascii=False)),
+                 ResourceLink(type="resource_link", uri=uri, name=f"Task {task_id} diff",
+                              mimeType="text/x-diff")],
+        structuredContent=data,
+    )
+
+
+@mcp.tool()
+async def get_task_diff(task_id: str, cursor: int = 0, limit: int = 60000) -> dict:
+    """Read a bounded page of an isolated task's Git binary patch."""
+    return await (await _gateway().handle(task_id)).diff(cursor, limit)
+
+
+@mcp.resource("agent-shuttle://tasks/{task_id}/diff")
+async def task_diff_resource(task_id: str) -> str:
+    """Full diff resource for modest changes; use get_task_diff for large patches."""
+    handle = await _gateway().handle(task_id)
+    page = await handle.diff(0, 60000)
+    if page["next_cursor"] is not None:
+        raise ValueError("Diff exceeds resource limit; use get_task_diff pages")
+    return page["text"]
+
+
+@mcp.tool()
+async def apply_task_changes(task_id: str, expected_revision: str,
+                             allow_partial: bool = False) -> dict:
+    """Explicitly apply reviewed changes if touched source files still match the base."""
+    require_coordinator()
+    return await (await _gateway().handle(task_id)).apply_changes(
+        expected_revision, allow_partial=allow_partial)
+
+
+@mcp.tool()
+async def discard_task_changes(task_id: str) -> dict:
+    """Explicitly delete an isolated task's saved change and owned worktree."""
+    require_coordinator()
+    return await (await _gateway().handle(task_id)).discard_changes()
 
 
 @mcp.tool()

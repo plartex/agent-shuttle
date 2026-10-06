@@ -2,6 +2,8 @@
 
 [English version / Английская версия](../api.md)
 
+Изолированные правки задач, `ChangeSet` и инструменты MCP описаны в [отдельном руководстве](../isolated-workspaces.md).
+
 В этом документе приведен полный справочник единого публичного Python API, эндпоинтов HTTP, команд CLI и инструментов Model Context Protocol (MCP), предоставляемых Agent Shuttle.
 
 ---

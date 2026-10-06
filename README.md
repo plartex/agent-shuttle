@@ -12,6 +12,8 @@ Agent Shuttle gives Python applications one way to work with **Codex**, **Antigr
 
 It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and report each runtime's tool permission guarantees—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
 
+File editing tasks can use [isolated Git worktrees with explicit change application](docs/isolated-workspaces.md).
+
 ---
 
 ## Supported Agent Harnesses

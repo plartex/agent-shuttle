@@ -7,7 +7,8 @@ from .managed import BridgeConnection, HarnessLaunch, connect_harness
 from .profiles import AgentProfile, ToolPolicy
 from .registry import build_profile
 from .task_store import SQLiteTaskStore
-from .task_library import TaskManager, Task, TaskStatus, TaskResult, Session, SessionInfo, AgentInfo
+from .task_library import TaskManager, Task, TaskStatus, TaskResult, ChangeSet, Session, SessionInfo, AgentInfo
+from .workspace_changes import WorkspaceProvider, GitWorktreeProvider
 
 __all__ = [
     "BridgeClient",
@@ -29,6 +30,9 @@ __all__ = [
     "Task",
     "TaskStatus",
     "TaskResult",
+    "ChangeSet",
+    "WorkspaceProvider",
+    "GitWorktreeProvider",
     "Session",
     "SessionInfo",
     "AgentInfo",

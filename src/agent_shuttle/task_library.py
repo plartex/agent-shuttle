@@ -18,6 +18,7 @@ from .profiles import ToolPolicy
 from .runtime_context import is_worker_context, nested_data_path, require_coordinator
 from .structured import encode_output_schema
 from .worker_lifecycle import WorkerLifecycleService
+from .workspace_changes import GitWorktreeProvider, WorkspaceProvider
 
 _FINAL = frozenset({"completed", "failed", "canceled", "rejected"})
 
@@ -82,6 +83,9 @@ class Task:
         await self.wait()
         return await self.manager.result(self.id)
 
+    async def changes(self) -> "ChangeSet | None":
+        return await self.manager.changes(self.id)
+
     async def cancel(self) -> TaskStatus:
         return await self.manager.cancel(self.id)
 
@@ -97,6 +101,25 @@ class Task:
     async def events(self, cursor: int = 0):
         async for event in self.manager.event_stream.events(self.id, cursor):
             yield event
+
+
+@dataclass(frozen=True)
+class ChangeSet:
+    manager: "TaskManager"
+    task_id: str
+
+    async def info(self) -> dict:
+        return await self.manager.change_info(self.task_id)
+
+    async def diff(self, cursor: int = 0, limit: int = 60000) -> dict:
+        return await self.manager.change_diff(self.task_id, cursor, limit)
+
+    async def apply(self, *, expected_revision: str, allow_partial: bool = False) -> dict:
+        return await self.manager.apply_change(self.task_id, expected_revision,
+                                               allow_partial=allow_partial)
+
+    async def discard(self) -> dict:
+        return await self.manager.discard_change(self.task_id)
 
 
 @dataclass(frozen=True)
@@ -118,6 +141,8 @@ class TaskManager:
                  database: Path | str | None = None, memory: bool = False,
                  runtime_context: str | None = None,
                  info_providers: dict[str, Any] | None = None,
+                 workspace_provider: WorkspaceProvider | None = None,
+                 backend_factories: dict[str, Any] | None = None,
                  execution_timeout_seconds: float = 1800,
                  stall_timeout_seconds: float = 1800):
         for value in (execution_timeout_seconds, stall_timeout_seconds):
@@ -127,6 +152,8 @@ class TaskManager:
         if not self.workspace.is_dir():
             raise ValueError("workspace must be a directory")
         self.backends = dict(backends)
+        self.backend_factories = dict(backend_factories or {})
+        self.workspace_provider = workspace_provider or GitWorktreeProvider(self.workspace)
         self.info_providers = dict(info_providers or {})
         if runtime_context not in (None, "coordinator", "worker"):
             raise ValueError("runtime_context must be coordinator or worker")
@@ -142,9 +169,11 @@ class TaskManager:
         self.event_stream = EventStreamService(self.repository)
         self.workers = WorkerLifecycleService(
             self.repository, self.event_stream, self.backends, self.workspace, self.database,
-            execution_timeout_seconds, stall_timeout_seconds)
+            execution_timeout_seconds, stall_timeout_seconds,
+            workspace_provider=self.workspace_provider, backend_factories=self.backend_factories)
         self._closed = False
         self._open = False
+        self._change_lock = asyncio.Lock()
 
     @classmethod
     def for_workspace(cls, workspace: Path | str, *, antigravity_command: str = "agy",
@@ -155,6 +184,8 @@ class TaskManager:
         return cls({"codex": CodexBackend(root),
                     "antigravity": AntigravityCliBackend(root, antigravity_command)},
                    workspace=root, database=database,
+                   backend_factories={"codex": lambda path: CodexBackend(path),
+                                      "antigravity": lambda path: AntigravityCliBackend(path, antigravity_command)},
                    info_providers={"codex": CodexInfo(root),
                                    "antigravity": AntigravityCliInfo(root, antigravity_command)})
 
@@ -164,6 +195,18 @@ class TaskManager:
         self.repository.open()
         try:
             self.workers.recover()
+            for change in self.repository.list_changes("running"):
+                try:
+                    captured = await asyncio.to_thread(self.workspace_provider.capture, change, partial=True)
+                    self.repository.save_change(captured)
+                except Exception as exc:
+                    self.repository.set_change_state(change["task_id"], "inspection_required", str(exc))
+            for change in self.repository.list_changes("applying"):
+                try:
+                    state = await asyncio.to_thread(self.workspace_provider.reconcile, change)
+                    self.repository.set_change_state(change["task_id"], state)
+                except Exception as exc:
+                    self.repository.set_change_state(change["task_id"], "inspection_required", str(exc))
         except BaseException:
             self.repository.close()
             raise
@@ -190,7 +233,8 @@ class TaskManager:
                        reasoning_effort: str | None = None, tool_policy: str | None = None,
                        session_id: str | None = None, request_id: str | None = None,
                        task_id: str | None = None, event_sink=None,
-                       output_schema: dict | None = None) -> Task:
+                       output_schema: dict | None = None,
+                       workspace_mode: str = "shared") -> Task:
         require_coordinator(self.runtime_context == "worker")
         self.repository.ensure_open()
         if agent_id not in self.backends:
@@ -206,6 +250,15 @@ class TaskManager:
             raise ValueError("prompt must be nonempty")
         if tool_policy is not None and tool_policy not in {policy.value for policy in ToolPolicy}:
             raise ValueError("Unknown tool_policy")
+        if workspace_mode not in {"shared", "isolated"}:
+            raise ValueError("workspace_mode must be shared or isolated")
+        if workspace_mode == "isolated":
+            if session_id is not None:
+                raise ValueError("Isolated mode does not support sessions in v1")
+            if tool_policy != "workspace_write":
+                raise ValueError("Isolated mode requires workspace_write")
+            if agent_id not in self.backend_factories or not self._enforces_workspace(agent_id):
+                raise ValueError(f"Agent {agent_id!r} cannot enforce isolated workspace writes")
         if request_id is not None:
             request_id = str(uuid.UUID(request_id))
         if session_id is not None:
@@ -218,7 +271,8 @@ class TaskManager:
             if session["output_schema"] != schema:
                 raise ValueError("Session output schema is pinned")
         fingerprint = hashlib.sha256(json.dumps(
-            [agent_id, prompt, model, reasoning_effort, tool_policy, session_id] + ([schema] if schema else []),
+            [agent_id, prompt, model, reasoning_effort, tool_policy, session_id]
+            + ([schema] if schema else []) + ([workspace_mode] if workspace_mode != "shared" else []),
             ensure_ascii=False, separators=(",", ":"),
         ).encode()).hexdigest()
         if request_id is not None:
@@ -228,16 +282,36 @@ class TaskManager:
                     raise ValueError("request_id is already bound to another request")
                 return Task(self, existing["id"])
         task_id = str(uuid.UUID(task_id)) if task_id is not None else str(uuid.uuid4())
-        self.repository.create_task({
-            "id": task_id, "agent_id": agent_id, "session_id": session_id,
-            "request_id": request_id, "fingerprint": fingerprint, "prompt": prompt,
-            "model": model, "reasoning_effort": reasoning_effort,
-            "tool_policy": tool_policy, "output_schema": schema,
-        }, {"prompt": prompt})
+        change = (await asyncio.to_thread(self.workspace_provider.prepare, task_id)
+                  if workspace_mode == "isolated" else None)
+        try:
+            self.repository.create_task({
+                "id": task_id, "agent_id": agent_id, "session_id": session_id,
+                "request_id": request_id, "fingerprint": fingerprint, "prompt": prompt,
+                "model": model, "reasoning_effort": reasoning_effort,
+                "tool_policy": tool_policy, "output_schema": schema,
+            }, {"prompt": prompt})
+        except BaseException:
+            if change is not None:
+                await asyncio.to_thread(self.workspace_provider.discard, change)
+            raise
+        if change is not None:
+            self.repository.save_change(change)
         if event_sink is not None:
             self.event_stream.attach(task_id, event_sink)
         self.workers.launch(task_id)
         return Task(self, task_id)
+
+    def _enforces_workspace(self, agent_id: str) -> bool:
+        from .backends import AntigravityCliBackend, CodexBackend
+        from .profiled import ProfiledBackend
+        backend = self.backends[agent_id]
+        if isinstance(backend, (CodexBackend, AntigravityCliBackend)):
+            return True
+        if isinstance(backend, ProfiledBackend):
+            return (backend.profile.runtime == "opencode"
+                    and backend.profile.max_tool_policy in {ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS})
+        return bool(getattr(backend, "enforces_workspace_write", False))
 
     async def list_agents(self) -> list[AgentInfo]:
         self.repository.ensure_open()
@@ -306,20 +380,115 @@ class TaskManager:
         deadline = None if timeout is None else monotonic() + timeout
         while True:
             status = await self.status(task_id)
-            if status.state in _FINAL or (deadline is not None and monotonic() >= deadline):
+            change = self.repository.change(task_id)
+            settled = change is None or change["state"] != "running"
+            if (status.state in _FINAL and settled) or (deadline is not None and monotonic() >= deadline):
                 return status
             await asyncio.sleep(0.05 if deadline is None else min(0.05, max(0, deadline - monotonic())))
 
     async def result(self, task_id: str) -> TaskResult:
         row = self.repository.task(task_id)
+        change = self.repository.change(task_id)
         status = self._status(row)
         return TaskResult(**status.__dict__, text=row["text"],
                           usage=json.loads(row["usage"]) if row["usage"] else None,
                           details=json.loads(row["details"]) if row["details"] else None,
                           requested_model=row["model"], observed_model=row["observed_model"],
                           warnings=tuple(json.loads(row["warnings"])) if row["warnings"] else (),
-                          files_changed=tuple(json.loads(row["files_changed"])) if row["files_changed"] else (),
-                          files_changed_state=row["files_changed_state"])
+                          files_changed=(tuple(change["files"]) if change else
+                                         tuple(json.loads(row["files_changed"])) if row["files_changed"] else ()),
+                          files_changed_state=(change["state"] if change else row["files_changed_state"]))
+
+    async def changes(self, task_id: str) -> ChangeSet | None:
+        self.repository.task(task_id)
+        return ChangeSet(self, task_id) if self.repository.change(task_id) else None
+
+    async def change_info(self, task_id: str) -> dict:
+        change = self.repository.change(task_id)
+        if change is None:
+            raise KeyError(f"Task {task_id} has no isolated changes")
+        return {**{key: change[key] for key in ("task_id", "state", "revision", "files", "error", "partial")},
+                "recovery_path": (change["workspace_path"]
+                                  if change["state"] == "inspection_required" else None),
+                "warnings": ["Ignored files and uncommitted submodule contents are excluded"]}
+
+    async def change_diff(self, task_id: str, cursor: int = 0, limit: int = 60000) -> dict:
+        self.event_stream._page(cursor, limit, 60000)
+        change = self.repository.change(task_id)
+        if change is None:
+            raise KeyError(f"Task {task_id} has no isolated changes")
+        body = await asyncio.to_thread(self.workspace_provider.diff, change)
+        end = min(len(body), cursor + limit)
+        return {"task_id": task_id, "state": change["state"], "revision": change["revision"],
+                "text": body[cursor:end], "next_cursor": end if end < len(body) else None,
+                "total_size": len(body)}
+
+    async def apply_change(self, task_id: str, expected_revision: str,
+                           *, allow_partial: bool = False) -> dict:
+        require_coordinator(self.runtime_context == "worker")
+        async with self._change_lock:
+            return await self._apply_change_locked(task_id, expected_revision, allow_partial)
+
+    async def _apply_change_locked(self, task_id: str, expected_revision: str,
+                                   allow_partial: bool) -> dict:
+        change = self.repository.change(task_id)
+        if change is None:
+            raise KeyError(f"Task {task_id} has no isolated changes")
+        if change["revision"] != expected_revision or not expected_revision:
+            raise ValueError("Change revision does not match")
+        if change["state"] == "applied":
+            return {"task_id": task_id, "state": "already_applied", "revision": expected_revision}
+        if change["state"] not in {"ready", "partial", "conflict"}:
+            raise ValueError(f"Cannot apply changes in state {change['state']}")
+        if change["partial"] and not allow_partial:
+            raise ValueError("Partial changes require allow_partial=True")
+        self.repository.set_change_state(task_id, "applying")
+        operation = asyncio.create_task(asyncio.to_thread(self.workspace_provider.apply, change))
+        try:
+            outcome = await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            # A disconnected MCP/A2A caller must not leave a live apply thread
+            # writing while SQLite still reports an indefinitely pending apply.
+            try:
+                outcome = await operation
+                self.repository.set_change_state(task_id, outcome)
+            except Exception as exc:
+                self.repository.set_change_state(task_id, "inspection_required", str(exc))
+            raise
+        except Exception as exc:
+            self.repository.set_change_state(task_id, "inspection_required", str(exc))
+            raise
+        self.repository.set_change_state(task_id, outcome)
+        return {"task_id": task_id, "state": outcome, "revision": expected_revision}
+
+    async def discard_change(self, task_id: str) -> dict:
+        require_coordinator(self.runtime_context == "worker")
+        async with self._change_lock:
+            return await self._discard_change_locked(task_id)
+
+    async def _discard_change_locked(self, task_id: str) -> dict:
+        change = self.repository.change(task_id)
+        if change is None:
+            raise KeyError(f"Task {task_id} has no isolated changes")
+        if change["state"] == "discarded":
+            return {"task_id": task_id, "state": "discarded"}
+        if change["state"] in {"running", "applying", "inspection_required"}:
+            raise ValueError(f"Cannot discard changes in state {change['state']}")
+        operation = asyncio.create_task(asyncio.to_thread(self.workspace_provider.discard, change))
+        try:
+            await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            try:
+                await operation
+                self.repository.set_change_state(task_id, "discarded")
+            except Exception as exc:
+                self.repository.set_change_state(task_id, "inspection_required", str(exc))
+            raise
+        except Exception as exc:
+            self.repository.set_change_state(task_id, "inspection_required", str(exc))
+            raise
+        self.repository.set_change_state(task_id, "discarded")
+        return {"task_id": task_id, "state": "discarded"}
 
     async def cancel(self, task_id: str) -> TaskStatus:
         require_coordinator(self.runtime_context == "worker")
