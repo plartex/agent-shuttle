@@ -37,6 +37,8 @@ class WorkerLifecycleService:
         self.execution_timeout_seconds = execution_timeout_seconds
         self.stall_timeout_seconds = stall_timeout_seconds
         self._active: dict[str, asyncio.Task] = {}
+        self._inflight: dict[str, asyncio.Task] = {}
+        self._cancel_requested: set[str] = set()
         self._native_sessions: dict[str, _NativeSession] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
 
@@ -73,15 +75,22 @@ class WorkerLifecycleService:
         row = self.repository.task(task_id)
         if row["state"] in _FINAL:
             return
-        running = self._active.get(task_id)
-        if running is not None:
-            running.cancel()
-            await asyncio.gather(running, return_exceptions=True)
-        if self.repository.task(task_id)["state"] not in _FINAL:
-            self.repository.update_task(task_id, "canceled", {"reason": "explicit cancellation"})
-        session_id = self.repository.task(task_id)["session_id"]
-        if session_id is not None:
-            await self.interrupt_session(session_id)
+        self._cancel_requested.add(task_id)
+        try:
+            running = self._active.get(task_id)
+            if running is not None:
+                backend_task = self._inflight.get(task_id)
+                if backend_task is not None:
+                    backend_task.cancel()
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+            if self.repository.task(task_id)["state"] not in _FINAL:
+                self.repository.update_task(task_id, "canceled", {"reason": "explicit cancellation"})
+            session_id = self.repository.task(task_id)["session_id"]
+            if session_id is not None:
+                await self.interrupt_session(session_id)
+        finally:
+            self._cancel_requested.discard(task_id)
 
     async def _execute(self, task_id: str):
         row = self.repository.task(task_id)
@@ -152,8 +161,13 @@ class WorkerLifecycleService:
                 raise TimeoutError("Worker exceeded its execution budget") from exc
             if deadline - monotonic() <= 0:
                 raise TimeoutError("Worker exceeded its execution budget")
+            if task_id in self._cancel_requested:
+                raise asyncio.CancelledError
             running = asyncio.create_task(invoke())
+            self._inflight[task_id] = running
             while not running.done():
+                if task_id in self._cancel_requested:
+                    raise asyncio.CancelledError
                 now = monotonic()
                 remaining = deadline - now
                 if backend_started:
@@ -214,6 +228,8 @@ class WorkerLifecycleService:
                                         usage=getattr(exc, "usage", None),
                                         details=getattr(exc, "details", None))
         finally:
+            self._inflight.pop(task_id, None)
+            self._cancel_requested.discard(task_id)
             if row["session_id"]:
                 self.repository.touch_session(row["session_id"])
 
