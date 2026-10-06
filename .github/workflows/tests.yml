@@ -39,6 +39,7 @@ jobs:
           python -m pip install build twine
           python -m build
           python -m twine check --strict dist/*
+          python tests/verify_distributions.py dist
       - uses: actions/upload-artifact@v4
         with:
           name: python-distributions
