@@ -111,6 +111,14 @@ class TaskHandle:
         async for event in self.client.task_events(self.peer_url, self.task_id):
             yield event
 
+    async def events_page(self, cursor: int = 0, limit: int = 100) -> dict:
+        """Read Shuttle's ordered event journal from a sequence cursor."""
+        return await self.client.task_events_page(self.peer_url, self.task_id, cursor, limit)
+
+    async def event_page(self, seq: int, cursor: int = 0, limit: int = 60000) -> dict:
+        """Read a full journal event whose preview was truncated."""
+        return await self.client.task_event_page(self.peer_url, self.task_id, seq, cursor, limit)
+
     async def result_page(self, cursor: int = 0, limit: int = 60000) -> dict:
         return await self.client.task_result_page(self.peer_url, self.task_id, cursor, limit)
 
@@ -360,6 +368,28 @@ class ShuttleClient:
             end += 1
         return {"task_id": task_id, "state": TaskState.Name(task.status.state), "items": items[cursor:end],
                 "next_cursor": end if end < len(items) else None, "total_size": len(items)}
+
+    async def task_events_page(self, peer_url: str, task_id: str,
+                               cursor: int = 0, limit: int = 100) -> dict:
+        _validate_page(cursor, limit, 100)
+        async with await self._http(peer_url) as http:
+            response = await http.get(peer_url.rstrip("/") +
+                                      f"/shuttle/tasks/{uuid.UUID(task_id)}/events",
+                                      params={"cursor": cursor, "limit": limit})
+            response.raise_for_status()
+            return response.json()
+
+    async def task_event_page(self, peer_url: str, task_id: str, seq: int,
+                              cursor: int = 0, limit: int = 60000) -> dict:
+        _validate_page(cursor, limit, 60000)
+        if type(seq) is not int or seq < 0:
+            raise ValueError("seq must be nonnegative")
+        async with await self._http(peer_url) as http:
+            response = await http.get(peer_url.rstrip("/") +
+                                      f"/shuttle/tasks/{uuid.UUID(task_id)}/events/{seq}",
+                                      params={"cursor": cursor, "limit": limit})
+            response.raise_for_status()
+            return response.json()
 
     async def cancel_task(self, peer_url: str, task_id: str) -> ShuttleResult:
         require_coordinator()

@@ -361,8 +361,20 @@ async def get_result(task_id: str, cursor: int = 0, limit: int = 60000) -> dict:
 
 @mcp.tool()
 async def get_transcript(task_id: str, cursor: int = 0, limit: int = 100) -> dict:
-    """Read a page of task messages, progress metadata and artifacts."""
+    """Read a page of A2A task history and artifacts; status updates may be absent."""
     return await (await _gateway().handle(task_id)).transcript(cursor, limit)
+
+
+@mcp.tool()
+async def get_events(task_id: str, cursor: int = 0, limit: int = 100) -> dict:
+    """Read Shuttle's ordered event journal. Save total_size to poll after the current end."""
+    return await (await _gateway().handle(task_id)).events_page(cursor, limit)
+
+
+@mcp.tool()
+async def get_event_page(task_id: str, seq: int, cursor: int = 0, limit: int = 60000) -> dict:
+    """Read full JSON data for a journal event with data_truncated=true."""
+    return await (await _gateway().handle(task_id)).event_page(seq, cursor, limit)
 
 
 @mcp.tool()

@@ -585,6 +585,28 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
 
+    async def task_events_page(request):
+        try:
+            cursor = int(request.query_params.get("cursor", "0"))
+            limit = int(request.query_params.get("limit", "100"))
+            return JSONResponse(await manager.transcript(request.path_params["task_id"], cursor, limit))
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def task_event_page(request):
+        try:
+            seq = int(request.path_params["seq"])
+            cursor = int(request.query_params.get("cursor", "0"))
+            limit = int(request.query_params.get("limit", "60000"))
+            return JSONResponse(await manager.event_page(request.path_params["task_id"],
+                                                         seq, cursor, limit))
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
     async def apply_change(request):
         try:
             body = await request.json()
@@ -658,6 +680,8 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             Route("/shuttle/sessions/{session_id}", close_session, methods=["DELETE"]),
             Route("/shuttle/tasks/{task_id}/changes", change_info),
             Route("/shuttle/tasks/{task_id}/diff", change_diff),
+            Route("/shuttle/tasks/{task_id}/events", task_events_page),
+            Route("/shuttle/tasks/{task_id}/events/{seq}", task_event_page),
             Route("/shuttle/tasks/{task_id}/apply", apply_change, methods=["POST"]),
             Route("/shuttle/tasks/{task_id}/changes", discard_change, methods=["DELETE"]),
             *create_agent_card_routes(card),

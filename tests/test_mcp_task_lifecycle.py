@@ -36,7 +36,8 @@ class McpTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
             url = f"http://127.0.0.1:{port}"
             backend = FakeAntigravity(Path(folder))
             store = SQLiteTaskStore(Path(folder) / ".agent-shuttle" / "tasks-antigravity.sqlite3")
-            server = uvicorn.Server(uvicorn.Config(make_app("antigravity", backend, url, task_store=store, publish_credential=True),
+            app = make_app("antigravity", backend, url, task_store=store, publish_credential=True)
+            server = uvicorn.Server(uvicorn.Config(app,
                                                    host="127.0.0.1", port=port, log_level="error"))
             running = asyncio.create_task(server.serve())
             while not server.started:
@@ -63,6 +64,21 @@ class McpTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual((await call("cancel_task", task_id=first["task_id"]))["state"], "TASK_STATE_CANCELED")
                         self.assertEqual((await call("cancel_task", task_id=first["task_id"]))["state"], "TASK_STATE_CANCELED")
                         second = await call("submit_task", agent_id="antigravity", prompt="finish")
+                        await asyncio.wait_for(backend.started.wait(), 2)
+                        before = await call("get_events", task_id=second["task_id"])
+                        cursor = before["total_size"]
+                        await app.state.task_manager.event_stream.publish_backend_event(
+                            second["task_id"], {"kind": "large", "text": "x" * 70000})
+                        missed = await call("get_events", task_id=second["task_id"], cursor=cursor)
+                        large = next(item for item in missed["items"] if item["kind"] == "large")
+                        self.assertTrue(large["data_truncated"])
+                        chunks, offset = [], 0
+                        while offset is not None:
+                            part = await call("get_event_page", task_id=second["task_id"],
+                                              seq=large["seq"], cursor=offset)
+                            chunks.append(part["text"])
+                            offset = part["next_cursor"]
+                        self.assertIn("x" * 70000, "".join(chunks))
                         backend.release.set()
                         self.assertEqual((await call("wait_task", task_id=second["task_id"], timeout_seconds=2))["state"], "TASK_STATE_COMPLETED")
                         chunks = []

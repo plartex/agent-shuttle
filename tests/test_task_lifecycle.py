@@ -160,6 +160,61 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1].state, "TASK_STATE_COMPLETED")
         self.assertEqual((await reopened.result()).text, "done: reconnect")
 
+    async def test_remote_event_pages_resume_without_gaps_or_duplicates(self):
+        client = ShuttleClient(timeout_seconds=3)
+        handle = await client.submit(self.url, "journal")
+        await asyncio.wait_for(self.backend.started.wait(), 2)
+        first = await handle.events_page()
+        cursor = first["total_size"]
+        self.assertEqual([item["seq"] for item in first["items"]], list(range(cursor)))
+
+        journal = self.app.state.task_manager.event_stream
+        await journal.publish_backend_event(handle.task_id, {"kind": "step", "text": "one"})
+        await journal.publish_backend_event(handle.task_id, {"kind": "step", "text": "two"})
+        reopened = ShuttleClient(timeout_seconds=3).task(self.url, handle.task_id)
+        missed = await reopened.events_page(cursor, limit=1)
+        self.assertEqual([item["data"]["text"] for item in missed["items"]], ["one"])
+        next_page = await reopened.events_page(missed["next_cursor"], limit=1)
+        self.assertEqual([item["data"]["text"] for item in next_page["items"]], ["two"])
+        self.assertEqual([item["seq"] for item in missed["items"] + next_page["items"]],
+                         [cursor, cursor + 1])
+        tail = next_page["total_size"]
+        self.assertEqual((await reopened.events_page(tail))["items"], [])
+
+        self.backend.release.set()
+        await handle.result()
+        completed = await reopened.events_page(tail)
+        self.assertEqual([item["kind"] for item in completed["items"]], ["completed"])
+        self.assertEqual((await reopened.events_page(completed["total_size"]))["items"], [])
+
+    async def test_remote_large_event_and_http_error_contract(self):
+        client = ShuttleClient(timeout_seconds=3)
+        handle = await client.submit(self.url, "large event")
+        await asyncio.wait_for(self.backend.started.wait(), 2)
+        await self.app.state.task_manager.event_stream.publish_backend_event(
+            handle.task_id, {"kind": "large", "text": "x" * 70000})
+        page = await handle.events_page()
+        large = next(item for item in page["items"] if item["kind"] == "large")
+        self.assertTrue(large["data_truncated"])
+        chunks, offset = [], 0
+        while offset is not None:
+            part = await handle.event_page(large["seq"], cursor=offset)
+            chunks.append(part["text"])
+            offset = part["next_cursor"]
+        self.assertIn("x" * 70000, "".join(chunks))
+
+        async with httpx.AsyncClient() as unauthenticated:
+            response = await unauthenticated.get(self.url + f"/shuttle/tasks/{handle.task_id}/events")
+            self.assertEqual(response.status_code, 401)
+        async with await client._http(self.url) as http:
+            base = self.url + f"/shuttle/tasks/{handle.task_id}/events"
+            self.assertEqual((await http.get(base, params={"cursor": -1})).status_code, 400)
+            self.assertEqual((await http.get(base, params={"limit": 101})).status_code, 400)
+            self.assertEqual((await http.get(base + "/bad-seq")).status_code, 400)
+            self.assertEqual((await http.get(base + "/999999")).status_code, 404)
+            unknown = self.url + f"/shuttle/tasks/{uuid.uuid4()}/events"
+            self.assertEqual((await http.get(unknown)).status_code, 404)
+
     async def test_retried_submit_with_same_request_id_does_not_run_twice(self):
         client = ShuttleClient(timeout_seconds=3)
         request_id = str(uuid.uuid4())
