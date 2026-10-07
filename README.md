@@ -202,6 +202,7 @@ Available MCP tools:
 - `submit_task(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?, request_id?)`: Start a long task and return its ID immediately.
 - `check_task(task_id)`, `wait_task(task_id, timeout_seconds?)`, `cancel_task(task_id)`: Inspect, wait for, or stop a task.
 - `get_result(task_id, cursor?, limit?)`, `get_transcript(task_id, cursor?, limit?)`: Read bounded pages of output and history.
+- `get_events(task_id, cursor?, limit?)`, `get_event_page(task_id, seq, cursor?, limit?)`: Read Shuttle's ordered event journal and full data for a truncated event. Save `total_size` to poll after the current end.
 
 ---
 
@@ -221,7 +222,7 @@ Model parameters are passed as A2A metadata keys (`agent_shuttle.model`, `agent_
 - `connect_harness()` verifies that an existing server's workspace matches the caller's target workspace before reusing it.
 - **Sessions:** `ShuttleSession` maintains a stateful conversation across multiple `ask()` calls. Conversation settings (model, effort, tool policy) are pinned at session creation and cannot be changed mid-session. Idle sessions are cleaned up automatically after 30 minutes.
 - **Library task lifecycle:** `TaskManager` runs agents directly from Python, with no A2A or MCP server. It owns task IDs, sessions, a SQLite event journal, cancellation, result paging, preferences, and interruption recovery. A2A projects the same task ID and result through its protocol; MCP continues to reach those tasks through managed A2A peers. See the [Python API](docs/api.md#taskmanager-library-api).
-- **Remote task lifecycle:** `ShuttleClient.submit()` returns a remote `TaskHandle` immediately. Use `status()`, bounded `wait(timeout)`, `events()`, `result_page()`, `transcript()`, `result()`, or `cancel()`; reopen a task by ID with `client.task(url, task_id)`. A wait timeout does not stop the agent. An optional UUID `request_id` deduplicates retried submissions. Standalone servers can persist tasks with `--task-db`; MCP task tools do this automatically in the workspace's `.agent-shuttle` directory. Completed results survive restart; interrupted work is marked failed without replay. See the [API reference](docs/api.md#taskhandle-and-shuttleevent).
+- **Remote task lifecycle:** `ShuttleClient.submit()` returns a remote `TaskHandle` immediately. Use `status()`, bounded `wait(timeout)`, live `events()`, Shuttle-only `events_page()` and `event_page()`, `result_page()`, `transcript()`, `result()`, or `cancel()`; reopen a task by ID with `client.task(url, task_id)`. A wait timeout does not stop the agent. An optional UUID `request_id` deduplicates retried submissions. Standalone servers can persist tasks with `--task-db`; MCP task tools do this automatically in the workspace's `.agent-shuttle` directory. Completed results survive restart; interrupted work is marked failed without replay. See the [API reference](docs/api.md#taskhandle-and-shuttleevent).
 
 ### Safety & Tool Policies
 Agent Shuttle defines four standardized tool policies:

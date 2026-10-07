@@ -124,7 +124,7 @@ if snapshot.state == "TASK_STATE_WORKING":
 # cancelled = await handle.cancel()
 ```
 
-`status()` returns a `ShuttleResult` snapshot. `wait(timeout)` returns the latest snapshot when its finite, nonnegative wait budget expires; `result()` waits until a terminal or input-required state. `result_page(cursor, limit)` reads up to 60,000 characters; `transcript(cursor, limit)` reads up to 100 history/artifact items with a 60,000-character page budget. Follow `next_cursor` to continue. `events()` yields live `ShuttleEvent(kind, task_id, state, text, data)` updates; after a stream disconnect, call `status()` to recover the authoritative state. Repeated `cancel()` calls on a cancelled task return its cancelled status. Plain A2A servers keep tasks in memory unless started with `--task-db`. On restart, unfinished persisted tasks become failed with an interruption error; they are never replayed automatically. Cancellation of a persistent turn closes that native session; create a new session before continuing.
+`status()` returns a `ShuttleResult` snapshot. `wait(timeout)` returns the latest snapshot when its finite, nonnegative wait budget expires; `result()` waits until a terminal or input-required state. `result_page(cursor, limit)` reads up to 60,000 characters; `transcript(cursor, limit)` reads up to 100 A2A history/artifact items with a 60,000-character page budget. Follow `next_cursor` to continue. `events()` yields live `ShuttleEvent(kind, task_id, state, text, data)` A2A updates; after a stream disconnect, call `status()` to recover the authoritative state. On Shuttle servers, `events_page(cursor=0, limit=100)` reads the ordered, persisted event journal, including updates missed during a disconnect. Follow `next_cursor` while present; at the current end, save `total_size` as the cursor for a later call. Each item has a `seq`, `timestamp`, `kind`, `data`, and `data_truncated`. Use `event_page(seq, cursor=0, limit=60000)` to read the full JSON of a truncated event in chunks. These two journal methods are Shuttle extensions and do not fall back to A2A history on other peers. Repeated `cancel()` calls on a cancelled task return its cancelled status. Plain A2A servers keep tasks in memory unless started with `--task-db`. On restart, unfinished persisted tasks become failed with an interruption error; they are never replayed automatically. Cancellation of a persistent turn closes that native session; create a new session before continuing.
 
 ---
 
@@ -378,4 +378,7 @@ agent-shuttle-mcp
    Read status, wait within a separate budget, or explicitly cancel. Waiting out the budget does not stop execution.
 
 9. **`get_result(task_id, cursor=0, limit=60000)` / `get_transcript(task_id, cursor=0, limit=100)`**
-   Read bounded pages; continue with `next_cursor` until it is `null`. Stored results and transcripts remain readable after MCP restart; interrupted work becomes failed.
+   Read bounded result and A2A history/artifact pages; continue with `next_cursor` until it is `null`. A2A history may omit intermediate status updates.
+
+10. **`get_events(task_id, cursor=0, limit=100)` / `get_event_page(task_id, seq, cursor=0, limit=60000)`**
+    Read Shuttle's ordered event journal, or the full JSON of a truncated event. Follow `next_cursor` through existing pages; save `total_size` at the current end to poll for later events. Managed MCP task journals remain readable after restart; interrupted work becomes failed.

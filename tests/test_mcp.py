@@ -36,6 +36,7 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
                 "ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info",
                 "ask_agent", "get_agent_info",
                 "submit_task", "check_task", "wait_task", "cancel_task", "get_result", "get_transcript",
+                "get_events", "get_event_page",
                 "get_task_changes", "get_task_diff", "apply_task_changes", "discard_task_changes",
             },
         )

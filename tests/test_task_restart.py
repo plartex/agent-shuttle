@@ -27,6 +27,7 @@ class TaskRestartTests(unittest.IsolatedAsyncioTestCase):
             second = SlowBackend()
             first.workspace = second.workspace = Path(folder)
             saved_id = None
+            saved_events = None
             for index, backend in enumerate((first, second)):
                 server = uvicorn.Server(uvicorn.Config(make_app("slow", backend, url, task_store=SQLiteTaskStore(path), publish_credential=True),
                                                        host="127.0.0.1", port=port, log_level="error"))
@@ -41,10 +42,14 @@ class TaskRestartTests(unittest.IsolatedAsyncioTestCase):
                     if index == 0:
                         saved_id = handle.task_id
                         self.assertEqual((await handle.wait(2)).state, "TASK_STATE_COMPLETED")
+                        saved_events = await handle.events_page()
+                        self.assertEqual(saved_events["items"][-1]["kind"], "completed")
                     else:
                         self.assertEqual(handle.task_id, saved_id)
                         self.assertEqual((await handle.status()).text, "done: once")
                         self.assertEqual(backend.calls, 0)
+                        self.assertEqual(await handle.events_page(), saved_events)
+                        self.assertEqual((await handle.events_page(saved_events["total_size"]))["items"], [])
                 finally:
                     backend.release.set()
                     server.should_exit = True
