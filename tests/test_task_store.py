@@ -14,7 +14,7 @@ from unittest.mock import patch
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from a2a.helpers import new_text_message, new_text_part
-from a2a.types import ListTasksRequest, Task, TaskState
+from a2a.types import ListTasksRequest, SendMessageRequest, Task, TaskState
 from a2a.utils.errors import InvalidParamsError
 
 from agent_shuttle.task_store import CURRENT_SCHEMA_VERSION, SQLiteTaskStore
@@ -53,6 +53,89 @@ def _create_task(
 
 
 class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
+    async def test_v2_migration_preserves_tasks_and_retry_fingerprint(self) -> None:
+        SQLiteTaskStore(self.db_path)
+        task = _create_task("historic", state=TaskState.TASK_STATE_COMPLETED,
+                            status_text="agent_bridge.error is user text")
+        task.metadata["agent_bridge.error"] = {"code": "old"}
+        task.history.append(new_text_message("previous turn"))
+        task.history[0].metadata["agent_bridge.event"] = "progress"
+        pending = _create_task("interrupted", state=TaskState.TASK_STATE_WORKING)
+        pending.metadata["agent_bridge.event"] = "started"
+        request = SendMessageRequest(message=new_text_message("run"))
+        request.message.metadata["agent_bridge.request_id"] = "old-request"
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute("PRAGMA user_version=2")
+            conn.execute("INSERT INTO tasks (owner,task_id,task_data,context_id,state,status_timestamp_iso) "
+                         "VALUES (?,?,?,?,?,?)",
+                         ("", task.id, task.SerializeToString(), "", int(task.status.state),
+                          task.status.timestamp.ToJsonString()))
+            conn.execute("INSERT INTO request_bindings VALUES (?,?,?,?)",
+                         ("", "old-request", request.SerializeToString(deterministic=True), task.id))
+            conn.execute("INSERT INTO tasks (owner,task_id,task_data,context_id,state,status_timestamp_iso) "
+                         "VALUES (?,?,?,?,?,?)",
+                         ("", pending.id, pending.SerializeToString(), "", int(pending.status.state),
+                          pending.status.timestamp.ToJsonString()))
+            conn.commit()
+
+        store = SQLiteTaskStore(self.db_path)
+        migrated = await store.get(task.id)
+        self.assertEqual(migrated.id, "historic")
+        self.assertEqual(migrated.status.message.parts[0].text, "agent_bridge.error is user text")
+        self.assertEqual(migrated.metadata["agent_shuttle.error"]["code"], "old")
+        self.assertEqual(migrated.history[0].metadata["agent_shuttle.event"], "progress")
+        self.assertNotIn("agent_bridge.error", migrated.metadata)
+        self.assertEqual((await store.get("interrupted")).metadata["agent_shuttle.event"], "started")
+        self.assertEqual(await store.recover_interrupted(), 1)
+        recovered = await store.get("interrupted")
+        self.assertEqual(recovered.status.state, TaskState.TASK_STATE_FAILED)
+        self.assertEqual(recovered.metadata["agent_shuttle.error"]["code"], "server_restarted")
+        request.message.metadata["agent_shuttle.request_id"] = request.message.metadata[
+            "agent_bridge.request_id"]
+        del request.message.metadata["agent_bridge.request_id"]
+        retried = await store.request_task("old-request", request.SerializeToString(deterministic=True))
+        self.assertEqual(retried.id, task.id)
+        backups = list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3"))
+        self.assertEqual(len(backups), 1)
+        SQLiteTaskStore(self.db_path)
+        self.assertEqual(len(list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3"))), 1)
+
+    def test_v2_migration_conflict_rolls_back_and_keeps_backup(self) -> None:
+        SQLiteTaskStore(self.db_path)
+        task = _create_task("conflict")
+        task.metadata["agent_bridge.error"] = "old"
+        task.metadata["agent_shuttle.error"] = "new"
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute("PRAGMA user_version=2")
+            conn.execute("INSERT INTO tasks (owner,task_id,task_data,context_id,state,status_timestamp_iso) "
+                         "VALUES (?,?,?,?,?,?)",
+                         ("", task.id, task.SerializeToString(), "", int(task.status.state),
+                          task.status.timestamp.ToJsonString()))
+            conn.commit()
+        with self.assertRaisesRegex(ValueError, "Conflicting stored metadata"):
+            SQLiteTaskStore(self.db_path)
+        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+            raw = conn.execute("SELECT task_data FROM tasks").fetchone()[0]
+        original = Task.FromString(raw)
+        self.assertIn("agent_bridge.error", original.metadata)
+        self.assertEqual(len(list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3"))), 1)
+
+    def test_migration_waits_for_old_server_owner_to_stop(self) -> None:
+        running = SQLiteTaskStore(self.db_path)
+        running.acquire_owner()
+        try:
+            with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+                conn.execute("PRAGMA user_version=2")
+                conn.commit()
+            with self.assertRaisesRegex(RuntimeError, "already owned"):
+                SQLiteTaskStore(self.db_path)
+            with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertFalse(list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3")))
+        finally:
+            running.close()
+
     def test_one_running_server_owns_database_and_releases_owner_lock(self):
         first = SQLiteTaskStore(self.db_path)
         second = SQLiteTaskStore(self.db_path)
@@ -208,14 +291,14 @@ class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
         assert res_sub is not None
         self.assertEqual(res_sub.status.state, TaskState.TASK_STATE_FAILED)
         self.assertEqual(res_sub.status.message.parts[0].text, expected_msg)
-        self.assertEqual(res_sub.metadata["agent_bridge.error"]["code"], "server_restarted")
+        self.assertEqual(res_sub.metadata["agent_shuttle.error"]["code"], "server_restarted")
 
         res_work = await store.get("t-work")
         self.assertIsNotNone(res_work)
         assert res_work is not None
         self.assertEqual(res_work.status.state, TaskState.TASK_STATE_FAILED)
         self.assertEqual(res_work.status.message.parts[0].text, expected_msg)
-        self.assertEqual(res_work.metadata["agent_bridge.error"]["code"], "server_restarted")
+        self.assertEqual(res_work.metadata["agent_shuttle.error"]["code"], "server_restarted")
 
         # Second recovery call finds nothing left to recover.
         self.assertEqual(await store.recover_interrupted(), 0)
@@ -247,7 +330,7 @@ class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
             assert loaded is not None
             self.assertEqual(loaded.status.state, expected_state)
             self.assertEqual(loaded.status.message.parts[0].text, "status unchanged")
-            self.assertNotIn("agent_bridge.error", loaded.metadata)
+            self.assertNotIn("agent_shuttle.error", loaded.metadata)
 
     async def test_bind_request_atomicity_and_retry_dedup(self) -> None:
         store = SQLiteTaskStore(self.db_path)

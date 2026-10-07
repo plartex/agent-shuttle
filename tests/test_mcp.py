@@ -13,8 +13,8 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
             args=["-m", "agent_shuttle.mcp_server"],
             env={
                 **os.environ,
-                "BRIDGE_CODEX_URL": "http://127.0.0.1:8765",
-                "BRIDGE_ANTIGRAVITY_URL": "http://127.0.0.1:8766",
+                "AGENT_SHUTTLE_CODEX_URL": "http://127.0.0.1:8765",
+                "AGENT_SHUTTLE_ANTIGRAVITY_URL": "http://127.0.0.1:8766",
             },
         )
         async with stdio_client(params) as (reader, writer):
@@ -36,6 +36,8 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
                 "ask_codex", "ask_antigravity", "get_codex_info", "get_antigravity_info",
                 "ask_agent", "get_agent_info",
                 "submit_task", "check_task", "wait_task", "cancel_task", "get_result", "get_transcript",
+                "get_events", "get_event_page",
+                "get_task_changes", "get_task_diff", "apply_task_changes", "discard_task_changes",
             },
         )
 

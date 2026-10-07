@@ -23,7 +23,7 @@ def main() -> None:
         response = {"ok": True, "text": text}
     except Exception as exc:
         response = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-    print("AGENT_BRIDGE_RESULT=" + json.dumps(response, ensure_ascii=False), flush=True)
+    print("AGENT_SHUTTLE_RESULT=" + json.dumps(response, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ def _permissions(policy: ToolPolicy) -> dict:
 
 def _inline_config(profile: AgentProfile, policy: ToolPolicy) -> str:
     permission = _permissions(policy)
-    bridge_agent = {
+    shuttle_agent = {
         "mode": "primary",
         "description": "Agent Shuttle constrained analysis runtime",
         "prompt": (
@@ -66,7 +66,7 @@ def _inline_config(profile: AgentProfile, policy: ToolPolicy) -> str:
     }
     config: dict = {
         "permission": permission,
-        "agent": {"build": {"permission": permission}, "bridge": bridge_agent},
+        "agent": {"build": {"permission": permission}, "shuttle": shuttle_agent},
         "share": "disabled",
     }
     if profile.provider == "ollama":
@@ -266,7 +266,7 @@ class OpenCodeSession:
             raise RuntimeError("OpenCode session is closed")
         provider, model = self.selection.model.split("/", 1)
         payload: dict = {
-            "agent": "build" if self.selection.tool_policy in {ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS} else "bridge",
+            "agent": "build" if self.selection.tool_policy in {ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS} else "shuttle",
             "model": {"providerID": provider, "modelID": model},
             "parts": [{"type": "text", "text": prompt}],
         }

@@ -2,7 +2,7 @@
 
 [Russian version / Русская версия](CONTRIBUTING.ru.md)
 
-Thank you for contributing to Agent Shuttle. This project maintains a modular, local-first bridge between heterogeneous coding agent harnesses. Please follow these guidelines for development, testing, and documentation.
+Thank you for contributing to Agent Shuttle. This project maintains a modular, local-first shuttle between heterogeneous coding agent harnesses. Please follow these guidelines for development, testing, and documentation.
 
 ---
 
@@ -53,21 +53,21 @@ Live tests against real model runtimes are skipped by default. Run them only whe
 - **Live Ollama Integration (OpenCode & Claude Code):**
   Requires a running Ollama daemon (`http://127.0.0.1:11434`) with the model pulled:
   ```powershell
-  $env:BRIDGE_LIVE_OLLAMA_MODEL = 'qwen3.5:9b'
+  $env:AGENT_SHUTTLE_LIVE_OLLAMA_MODEL = 'qwen3.5:9b'
   # Optionally override executable locations:
-  # $env:BRIDGE_LIVE_OPENCODE_COMMAND = 'C:\tools\opencode.exe'
-  # $env:BRIDGE_LIVE_CLAUDE_COMMAND = 'C:\tools\claude.exe'
+  # $env:AGENT_SHUTTLE_LIVE_OPENCODE_COMMAND = 'C:\tools\opencode.exe'
+  # $env:AGENT_SHUTTLE_LIVE_CLAUDE_COMMAND = 'C:\tools\claude.exe'
   .\.venv\Scripts\python.exe -m unittest tests.test_live_ollama -v
   ```
 
 - **Live Antigravity Permissions Smoke:**
   Tests real `agy` tool execution under full access in an isolated temporary directory:
   ```powershell
-  $env:BRIDGE_LIVE_AGY_FULL_ACCESS = '1'
+  $env:AGENT_SHUTTLE_LIVE_AGY_FULL_ACCESS = '1'
   # Optionally test through a temporary A2A server:
-  $env:BRIDGE_LIVE_AGY_A2A_FULL_ACCESS = '1'
+  $env:AGENT_SHUTTLE_LIVE_AGY_A2A_FULL_ACCESS = '1'
   # Optionally specify custom binary path:
-  # $env:BRIDGE_LIVE_AGY_COMMAND = 'C:\path\to\agy.exe'
+  # $env:AGENT_SHUTTLE_LIVE_AGY_COMMAND = 'C:\path\to\agy.exe'
   .\.venv\Scripts\python.exe -m unittest tests.test_live_antigravity_permissions -v
   ```
 

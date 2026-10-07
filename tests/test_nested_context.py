@@ -1,4 +1,4 @@
-"""Regression tests for a Bridge inherited by a delegated worker."""
+"""Regression tests for a Shuttle inherited by a delegated worker."""
 
 import asyncio
 import os
@@ -19,7 +19,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from agent_shuttle import mcp_server
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from agent_shuttle.a2a_server import make_app
 from agent_shuttle.backends import AntigravityCliBackend, AntigravitySdkBackend, CodexBackend
 from agent_shuttle.task_library import TaskManager
@@ -201,7 +201,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_client_rejects_before_network(self):
         from agent_shuttle.runtime_context import WORKER_CONTEXT_ENV, NESTED_DISPATCH_ERROR
 
-        client = BridgeClient()
+        client = ShuttleClient()
         with patch.dict(os.environ, {WORKER_CONTEXT_ENV: "worker"}), \
              patch("agent_shuttle.client.httpx.AsyncClient") as http:
             for call in (
@@ -237,8 +237,8 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as folder, \
              patch.dict(os.environ, {WORKER_CONTEXT_ENV: "worker",
-                                  "BRIDGE_WORKSPACE": folder,
-                                  "BRIDGE_TASK_REGISTRY": str(Path(folder) / "tickets.json")}):
+                                  "AGENT_SHUTTLE_WORKSPACE": folder,
+                                  "AGENT_SHUTTLE_TASK_REGISTRY": str(Path(folder) / "tickets.json")}):
             with patch.object(mcp_server, "_task_gateway", None):
                 self.assertEqual(mcp_server._gateway().path,
                                  (Path(folder) / "nested" / "tickets.json").resolve())
@@ -284,7 +284,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
             params = StdioServerParameters(
                 command=sys.executable, args=["-m", "agent_shuttle.mcp_server"],
                 env={**os.environ, WORKER_CONTEXT_ENV: "worker",
-                     "BRIDGE_WORKSPACE": folder, "BRIDGE_TASK_REGISTRY": str(parent_tickets)},
+                     "AGENT_SHUTTLE_WORKSPACE": folder, "AGENT_SHUTTLE_TASK_REGISTRY": str(parent_tickets)},
             )
             async with stdio_client(params) as (reader, writer):
                 async with ClientSession(reader, writer) as session:
@@ -328,10 +328,10 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
                     else:
                         self.fail("A2A server did not start")
                     http.headers["Authorization"] = "Bearer " + app.state.local_credential.token
-                    identity = (await http.get(url + "/bridge/identity")).json()
+                    identity = (await http.get(url + "/shuttle/identity")).json()
                     self.assertEqual(identity["runtime_context"], "worker")
                     self.assertFalse(identity["dispatch_enabled"])
-                    self.assertEqual((await http.delete(url + "/bridge/sessions/" +
+                    self.assertEqual((await http.delete(url + "/shuttle/sessions/" +
                                                         str(uuid.uuid4()))).status_code, 403)
                     client = await create_client(url, ClientConfig(streaming=False, httpx_client=http))
                     try:
@@ -342,7 +342,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
                         with self.assertRaisesRegex(Exception, "nested_dispatch_disabled"):
                             await client.cancel_task(CancelTaskRequest(id=str(uuid.uuid4())))
                         with patch.dict(os.environ, {WORKER_CONTEXT_ENV: ""}):
-                            self.assertEqual((await http.delete(url + "/bridge/sessions/" +
+                            self.assertEqual((await http.delete(url + "/shuttle/sessions/" +
                                                                 str(uuid.uuid4()))).status_code, 403)
                             with self.assertRaisesRegex(Exception, "nested_dispatch_disabled"):
                                 async for _ in client.send_message(SendMessageRequest(

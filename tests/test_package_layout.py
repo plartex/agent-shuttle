@@ -17,7 +17,7 @@ class PackageLayoutTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.assertEqual(Path(agent_shuttle.__file__).resolve().parent,
                          root / "src" / "agent_shuttle")
-        self.assertIs(agent_shuttle.ShuttleClient, agent_shuttle.BridgeClient)
+        self.assertEqual(agent_shuttle.ShuttleClient.__name__, "ShuttleClient")
 
 
 if __name__ == "__main__":

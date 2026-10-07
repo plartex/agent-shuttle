@@ -1,4 +1,4 @@
-"""Reusable lifecycle for an existing or temporarily launched local Bridge peer."""
+"""Reusable lifecycle for an existing or temporarily launched local Shuttle peer."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import AsyncIterator
 from urllib.parse import urlparse
 
-from .client import BridgeClient
+from .client import ShuttleClient
 from .discovery import discover_harnesses
 from .profiles import AgentProfile
 from .local_auth import PeerAuthenticationError
@@ -33,7 +33,7 @@ _BACKENDS = {
 
 
 def _trace(stage: str) -> None:
-    if os.environ.get("BRIDGE_DEBUG") == "1":
+    if os.environ.get("AGENT_SHUTTLE_DEBUG") == "1":
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         print(f"[agent-shuttle] {stamp} managed: {stage}", file=sys.stderr, flush=True)
 
@@ -44,7 +44,7 @@ async def _stop_process_tree(process: subprocess.Popen) -> None:
 
 @dataclass(frozen=True)
 class HarnessLaunch:
-    """How to connect to a Bridge peer, starting one only when needed.
+    """How to connect to a Shuttle peer, starting one only when needed.
 
     ``profile_path`` selects a user-owned OpenCode/Claude Code profile. Without
     one, those runtimes receive a temporary Ollama profile for ``model`` with
@@ -69,7 +69,7 @@ class HarnessLaunch:
 
 
 @dataclass(frozen=True)
-class BridgeConnection:
+class ShuttleConnection:
     url: str
     started: bool
     log_path: Path | None = None
@@ -126,13 +126,13 @@ def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
 def _local_port(url: str) -> int:
     parsed = urlparse(url)
     if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        raise ValueError("Temporary Bridge servers require an HTTP loopback URL")
+        raise ValueError("Temporary Shuttle servers require an HTTP loopback URL")
     try:
         port = parsed.port
     except ValueError as exc:
-        raise ValueError("Temporary Bridge URL has an invalid port") from exc
+        raise ValueError("Temporary Shuttle URL has an invalid port") from exc
     if port is None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
-        raise ValueError("Temporary Bridge URL must contain only a host and port")
+        raise ValueError("Temporary Shuttle URL must contain only a host and port")
     return port
 
 
@@ -149,8 +149,8 @@ def _available_port() -> int:
 
 @asynccontextmanager
 async def connect_harness(
-    launch: HarnessLaunch, *, client: BridgeClient | None = None,
-) -> AsyncIterator[BridgeConnection]:
+    launch: HarnessLaunch, *, client: ShuttleClient | None = None,
+) -> AsyncIterator[ShuttleConnection]:
     """Reuse a matching peer or supervise a temporary one for the context."""
     if launch.name not in _BACKENDS:
         raise ValueError(f"Unknown harness {launch.name!r}")
@@ -167,7 +167,7 @@ async def connect_harness(
                 or isinstance(launch.agy_turn_timeout_seconds, bool)
                 or not 0 < launch.agy_turn_timeout_seconds < float("inf")):
             raise ValueError("agy_turn_timeout_seconds must be positive and finite")
-    client = client or BridgeClient()
+    client = client or ShuttleClient()
     identify = getattr(client, "identity", None) or client.capabilities
     _trace("checking existing server")
     try:
@@ -183,9 +183,9 @@ async def connect_harness(
     except Exception as exc:
         _trace(f"existing server unavailable ({type(exc).__name__})")
         if not launch.start_if_missing:
-            raise RuntimeError(f"Bridge at {launch.url} is unavailable: {exc}") from exc
+            raise RuntimeError(f"Shuttle at {launch.url} is unavailable: {exc}") from exc
     else:
-        yield BridgeConnection(launch.url, started=False)
+        yield ShuttleConnection(launch.url, started=False)
         return
 
     port = _local_port(launch.url)
@@ -202,7 +202,7 @@ async def connect_harness(
     command = launch.command or discover_harnesses().get(launch.name)
     _trace(f"discovered command={bool(command)}")
     if command is None and profile_path is None:
-        raise RuntimeError(f"{launch.name} is not installed; provide command or a running Bridge URL")
+        raise RuntimeError(f"{launch.name} is not installed; provide command or a running Shuttle URL")
 
     with tempfile.TemporaryDirectory(prefix="agent-shuttle-") as temporary:
         if launch.name in {"opencode", "claude_code"} and profile_path is None:
@@ -230,7 +230,7 @@ async def connect_harness(
             argv.extend(["--agy-turn-timeout-seconds", f"{launch.agy_turn_timeout_seconds:g}"])
             if launch.tool_policy == "full_access" or launch.agy_dangerously_skip_permissions:
                 argv.append("--agy-dangerously-skip-permissions")
-        log_path = launch.log_path or Path(temporary) / "bridge.log"
+        log_path = launch.log_path or Path(temporary) / "shuttle.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", encoding="utf-8") as log:
             _trace(f"spawning temporary server executable={sys.executable} log={log_path}")
@@ -248,7 +248,7 @@ async def connect_harness(
                 for _ in range(attempts):
                     if process.poll() is not None:
                         raise RuntimeError(
-                            f"{launch.name} Bridge exited ({process.returncode}); "
+                            f"{launch.name} Shuttle exited ({process.returncode}); "
                             f"log tail: {log_path.read_text(encoding='utf-8', errors='replace')[-2000:]}"
                         )
                     try:
@@ -264,14 +264,14 @@ async def connect_harness(
                         raise
                     except Exception as exc:
                         last_error = exc
-                        if os.environ.get("BRIDGE_DEBUG") == "1" and _ < 3:
+                        if os.environ.get("AGENT_SHUTTLE_DEBUG") == "1" and _ < 3:
                             _trace(f"identity attempt {_ + 1} failed ({type(exc).__name__}: {str(exc)[:200]})")
                         await asyncio.sleep(0.5)
                 else:
                     tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
                     raise TimeoutError(
-                        f"{launch.name} Bridge did not become ready: {last_error}; log tail: {tail}"
+                        f"{launch.name} Shuttle did not become ready: {last_error}; log tail: {tail}"
                     )
-                yield BridgeConnection(launch.url, started=True, log_path=log_path)
+                yield ShuttleConnection(launch.url, started=True, log_path=log_path)
             finally:
                 await _stop_process_tree(process)

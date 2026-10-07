@@ -15,7 +15,7 @@ from agent_shuttle.backends import AntigravityCliBackend, _AntigravityCliSession
 from agent_shuttle.backends import AntigravityPermissionDenied
 from agent_shuttle.agy_policy import ScopedAgyPolicy
 from agent_shuttle.task_library import TaskManager
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from agent_shuttle.a2a_server import make_app
 from tests.test_backends import _FakeProcess
 
@@ -136,7 +136,7 @@ class StructuredOutputTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.02)
             else:
                 self.fail("test server did not start")
-            async with BridgeClient().session(url, output_schema=SCHEMA) as session:
+            async with ShuttleClient().session(url, output_schema=SCHEMA) as session:
                 for prompt in ("first", "second"):
                     result = await session.ask(prompt)
                     self.assertEqual(result.state, "TASK_STATE_COMPLETED", result.text)

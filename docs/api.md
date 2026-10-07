@@ -1,5 +1,7 @@
 # Agent Shuttle API Reference
 
+Isolated task changes, `ChangeSet`, and MCP tools are documented in the [isolated workspaces guide](isolated-workspaces.md).
+
 [Russian version / Русская версия](ru/api.md)
 
 This document provides a comprehensive reference for the unified public Python API, HTTP endpoints, CLI commands, and Model Context Protocol (MCP) tools provided by Agent Shuttle.
@@ -20,12 +22,12 @@ from agent_shuttle import (
     SessionInfo,
     AgentInfo,
     ShuttleClient,
-    BridgeResult,
-    BridgeEvent,
-    BridgeSession,
+    ShuttleResult,
+    ShuttleEvent,
+    ShuttleSession,
     TaskHandle,
     HarnessLaunch,
-    BridgeConnection,
+    ShuttleConnection,
     connect_harness,
     AgentProfile,
     ToolPolicy,
@@ -68,7 +70,7 @@ client = ShuttleClient(timeout_seconds: float = 1800)
 
 #### Methods
 
-- **`async def ask(peer_url: str, prompt: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None, session_id: str | None = None, request_id: str | None = None) -> BridgeResult`**
+- **`async def ask(peer_url: str, prompt: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None, session_id: str | None = None, request_id: str | None = None) -> ShuttleResult`**
   Dispatches a text task and waits for its result. If the caller is cancelled or its overall timeout expires, it requests remote cancellation.
   - `prompt`: Non-empty text instruction.
   - `model`: Optional target model ID on the remote agent.
@@ -77,7 +79,7 @@ client = ShuttleClient(timeout_seconds: float = 1800)
   - `tool_policy`: One of `"no_tools"`, `"read_only"`, `"workspace_write"`, or `"full_access"`.
   - `session_id`: Optional UUID string identifying a persistent conversation.
 - `request_id`: Optional UUID for deduplicating retries. With `--task-db`, bindings survive a server restart. Reusing it with different arguments is an error.
-  - Returns: `BridgeResult`.
+  - Returns: `ShuttleResult`.
 
 - **`async def submit(..., request_id: str | None = None) -> TaskHandle`**
   Accepts the same task options as `ask()` and returns as soon as A2A creates the task. Unlike `ask()`, stopping the caller does not cancel the submitted task.
@@ -88,8 +90,8 @@ client = ShuttleClient(timeout_seconds: float = 1800)
 - **`task_status(peer_url, task_id)` / `cancel_task(peer_url, task_id)`**
   Fetch the current A2A task or request its cancellation.
 
-- **`def session(peer_url: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None) -> BridgeSession`**  
-  Constructs a reusable, stateful `BridgeSession` bound to `peer_url` with pinned settings. Recommended usage is with `async with`.
+- **`def session(peer_url: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None) -> ShuttleSession`**\
+  Constructs a reusable, stateful `ShuttleSession` bound to `peer_url` with pinned settings. Recommended usage is with `async with`.
 
 - **`async def info(peer_url: str) -> dict`**  
   Returns a comprehensive snapshot including capabilities, model catalog, reasoning efforts, and live account quota buckets.
@@ -108,7 +110,7 @@ client = ShuttleClient(timeout_seconds: float = 1800)
 
 ---
 
-### `TaskHandle` and `BridgeEvent`
+### `TaskHandle` and `ShuttleEvent`
 
 ```python
 handle = await client.submit(url, "Inspect this project", request_id=my_uuid)
@@ -122,17 +124,17 @@ if snapshot.state == "TASK_STATE_WORKING":
 # cancelled = await handle.cancel()
 ```
 
-`status()` returns a `BridgeResult` snapshot. `wait(timeout)` returns the latest snapshot when its finite, nonnegative wait budget expires; `result()` waits until a terminal or input-required state. `result_page(cursor, limit)` reads up to 60,000 characters; `transcript(cursor, limit)` reads up to 100 history/artifact items with a 60,000-character page budget. Follow `next_cursor` to continue. `events()` yields live `BridgeEvent(kind, task_id, state, text, data)` updates; after a stream disconnect, call `status()` to recover the authoritative state. Repeated `cancel()` calls on a cancelled task return its cancelled status. Plain A2A servers keep tasks in memory unless started with `--task-db`. On restart, unfinished persisted tasks become failed with an interruption error; they are never replayed automatically. Cancellation of a persistent turn closes that native session; create a new session before continuing.
+`status()` returns a `ShuttleResult` snapshot. `wait(timeout)` returns the latest snapshot when its finite, nonnegative wait budget expires; `result()` waits until a terminal or input-required state. `result_page(cursor, limit)` reads up to 60,000 characters; `transcript(cursor, limit)` reads up to 100 A2A history/artifact items with a 60,000-character page budget. Follow `next_cursor` to continue. `events()` yields live `ShuttleEvent(kind, task_id, state, text, data)` A2A updates; after a stream disconnect, call `status()` to recover the authoritative state. On Shuttle servers, `events_page(cursor=0, limit=100)` reads the ordered, persisted event journal, including updates missed during a disconnect. Follow `next_cursor` while present; at the current end, save `total_size` as the cursor for a later call. Each item has a `seq`, `timestamp`, `kind`, `data`, and `data_truncated`. Use `event_page(seq, cursor=0, limit=60000)` to read the full JSON of a truncated event in chunks. These two journal methods are Shuttle extensions and do not fall back to A2A history on other peers. Repeated `cancel()` calls on a cancelled task return its cancelled status. Plain A2A servers keep tasks in memory unless started with `--task-db`. On restart, unfinished persisted tasks become failed with an interruption error; they are never replayed automatically. Cancellation of a persistent turn closes that native session; create a new session before continuing.
 
 ---
 
-### `BridgeResult`
+### `ShuttleResult`
 
 A dataclass representing the outcome of an A2A task:
 
 ```python
 @dataclass(frozen=True)
-class BridgeResult:
+class ShuttleResult:
     peer: str
     task_id: str | None
     context_id: str | None
@@ -150,7 +152,7 @@ class BridgeResult:
 
 ---
 
-### `BridgeSession`
+### `ShuttleSession`
 
 Manages a persistent conversation across multiple turns with pinned settings:
 
@@ -168,7 +170,7 @@ async with client.session(url, model="gpt-5.6-terra") as session:
 
 ### `HarnessLaunch` & `connect_harness`
 
-Programmatic supervision for local Bridge peer lifecycles. It connects to an existing server if its backend, canonical workspace, and permissions match, or automatically starts a temporary supervised background instance.
+Programmatic supervision for local Shuttle peer lifecycles. It connects to an existing server if its backend, canonical workspace, and permissions match, or automatically starts a temporary supervised background instance.
 
 ```python
 @dataclass(frozen=True)
@@ -234,7 +236,7 @@ Exception raised when Antigravity CLI reports `status: SUCCESS` but tool invocat
 
 ### `AntigravityAuthenticationError`
 
-Exception raised when the Antigravity CLI cannot access its account from the Bridge process. If the CLI also reports access denied for its configuration, run Bridge as the signed-in user outside the caller's sandbox.
+Exception raised when the Antigravity CLI cannot access its account from the Shuttle process. If the CLI also reports access denied for its configuration, run Shuttle as the signed-in user outside the caller's sandbox.
 
 ---
 
@@ -269,17 +271,17 @@ Every Agent Shuttle A2A server exposes the following endpoints on loopback (`127
 |---|---|---|
 | `/.well-known/agent-card.json` | `GET` | A2A 1.0 JSON Agent Card describing capabilities and skills. |
 | `/` | `POST` | A2A 1.0 JSON-RPC endpoint for sending tasks and message streaming. |
-| `/bridge/identity` | `GET` | Lightweight JSON identity check (backend, canonical workspace, permission mode, turn timeout). Fast readiness check. |
-| `/bridge/info` | `GET` | Combined capabilities, model list, reasoning efforts, and live account quotas. |
-| `/bridge/capabilities` | `GET` | Model list, selected model, effort options, and tool policy ceilings. |
-| `/bridge/usage` | `GET` | Account quota usage, bucket limits, and reset times. |
-| `/bridge/sessions/{session_id}` | `DELETE` | Closes the specified persistent session and releases resources. |
+| `/shuttle/identity` | `GET` | Lightweight JSON identity check (backend, canonical workspace, permission mode, turn timeout). Fast readiness check. |
+| `/shuttle/info` | `GET` | Combined capabilities, model list, reasoning efforts, and live account quotas. |
+| `/shuttle/capabilities` | `GET` | Model list, selected model, effort options, and tool policy ceilings. |
+| `/shuttle/usage` | `GET` | Account quota usage, bucket limits, and reset times. |
+| `/shuttle/sessions/{session_id}` | `DELETE` | Closes the specified persistent session and releases resources. |
 
 ---
 
 ## Command-Line Interface (CLI)
 
-The CLI entry point is `agent-shuttle` (or `python -m agent_shuttle`). `BridgeClient` remains a class in the `agent_shuttle` API. Version 0.6 removes the `agent_bridge` import package and `agent-bridge` commands.
+The CLI entry point is `agent-shuttle` (or `python -m agent_shuttle`). The Python API exports `ShuttleClient`, `ShuttleSession`, `ShuttleResult`, `ShuttleEvent`, and `ShuttleConnection`.
 
 ### `agent-shuttle serve`
 
@@ -340,10 +342,10 @@ agent-shuttle-mcp
 
 ### Environment Configuration
 
-- `BRIDGE_WORKSPACE`: Default project directory for managed servers. Without it, the MCP process working directory is used; tools can also pass `workspace`.
-- `BRIDGE_CODEX_URL` and `BRIDGE_ANTIGRAVITY_URL`: Optional local addresses. If no matching server is running, MCP starts one at that address for the request.
-- `BRIDGE_TASK_REGISTRY`: Optional path for MCP task tickets (default: `<BRIDGE_WORKSPACE>/.agent-shuttle/mcp-tasks.json`). The managed A2A task databases are stored in each target workspace's `.agent-shuttle` directory.
-- `BRIDGE_AGENTS_JSON`: Optional map of custom agent IDs to launch settings. A plain URL remains accepted for a built-in agent ID:
+- `AGENT_SHUTTLE_WORKSPACE`: Default project directory for managed servers. Without it, the MCP process working directory is used; tools can also pass `workspace`.
+- `AGENT_SHUTTLE_CODEX_URL` and `AGENT_SHUTTLE_ANTIGRAVITY_URL`: Optional local addresses. If no matching server is running, MCP starts one at that address for the request.
+- `AGENT_SHUTTLE_TASK_REGISTRY`: Optional path for MCP task tickets (default: `<AGENT_SHUTTLE_WORKSPACE>/.agent-shuttle/mcp-tasks.json`). The managed A2A task databases are stored in each target workspace's `.agent-shuttle` directory.
+- `AGENT_SHUTTLE_AGENTS_JSON`: Optional map of custom agent IDs to launch settings. A plain URL remains accepted for a built-in agent ID:
   ```json
   {"opencode-local": {"harness": "opencode", "profile": "C:/profiles/opencode.json", "url": "http://127.0.0.1:8767"}}
   ```
@@ -352,7 +354,7 @@ agent-shuttle-mcp
 ### Exposed MCP Tools
 
 1. **`ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`**
-   Uses a matching A2A server or starts one. Built-in IDs need no `BRIDGE_AGENTS_JSON` entry.
+   Uses a matching A2A server or starts one. Built-in IDs need no `AGENT_SHUTTLE_AGENTS_JSON` entry.
 
 2. **`get_agent_info(agent_id, workspace?)`**
    Reads models, efforts, and quotas, starting a temporary server if needed.
@@ -376,4 +378,7 @@ agent-shuttle-mcp
    Read status, wait within a separate budget, or explicitly cancel. Waiting out the budget does not stop execution.
 
 9. **`get_result(task_id, cursor=0, limit=60000)` / `get_transcript(task_id, cursor=0, limit=100)`**
-   Read bounded pages; continue with `next_cursor` until it is `null`. Stored results and transcripts remain readable after MCP restart; interrupted work becomes failed.
+   Read bounded result and A2A history/artifact pages; continue with `next_cursor` until it is `null`. A2A history may omit intermediate status updates.
+
+10. **`get_events(task_id, cursor=0, limit=100)` / `get_event_page(task_id, seq, cursor=0, limit=60000)`**
+    Read Shuttle's ordered event journal, or the full JSON of a truncated event. Follow `next_cursor` through existing pages; save `total_size` at the current end to poll for later events. Managed MCP task journals remain readable after restart; interrupted work becomes failed.

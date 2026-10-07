@@ -13,8 +13,8 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 async def main():
     root = Path(__file__).resolve().parents[1]
     env = {key: value for key, value in os.environ.items()
-           if key not in {"BRIDGE_CODEX_URL", "BRIDGE_ANTIGRAVITY_URL", "BRIDGE_AGENTS_JSON"}}
-    env["BRIDGE_WORKSPACE"] = str(root)
+           if key not in {"AGENT_SHUTTLE_CODEX_URL", "AGENT_SHUTTLE_ANTIGRAVITY_URL", "AGENT_SHUTTLE_AGENTS_JSON"}}
+    env["AGENT_SHUTTLE_WORKSPACE"] = str(root)
     params = StdioServerParameters(
         command=sys.executable, args=["-m", "agent_shuttle.mcp_server"], env=env,
     )

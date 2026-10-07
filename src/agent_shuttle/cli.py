@@ -1,4 +1,4 @@
-"""Command line entry points for the bridge."""
+"""Command line entry points for the shuttle."""
 
 from __future__ import annotations
 
@@ -8,12 +8,13 @@ import json
 import os
 import sys
 import socket
+from dataclasses import replace
 from pathlib import Path
 
 import uvicorn
 
 from .a2a_server import make_app
-from .client import BridgeClient
+from .client import ShuttleClient
 from .discovery import discover_harnesses
 from .profiles import AgentProfile
 from .registry import build_builtin, build_profile
@@ -39,12 +40,12 @@ def main() -> None:
     serve.add_argument("--task-db", type=Path, help="Persist tasks and request bindings in this SQLite file")
     serve.add_argument("--execution-timeout-seconds", type=float, default=1800)
     serve.add_argument("--stall-timeout-seconds", type=float, default=1800)
-    serve.add_argument("--agy-command", default=os.environ.get("BRIDGE_AGY_COMMAND", "agy"))
+    serve.add_argument("--agy-command", default=os.environ.get("AGENT_SHUTTLE_AGY_COMMAND", "agy"))
     serve.add_argument("--agy-mode", choices=["cli", "sdk"], default="cli")
     serve.add_argument("--agy-python", type=Path)
     serve.add_argument(
         "--agy-dangerously-skip-permissions", action="store_true",
-        help="Antigravity CLI only: approve every tool call for this Bridge server",
+        help="Antigravity CLI only: approve every tool call for this Shuttle server",
     )
     serve.add_argument(
         "--agy-turn-timeout-seconds", type=float, default=None,
@@ -64,7 +65,7 @@ def main() -> None:
     discover.add_argument("--claude-command")
     discover.add_argument("--profile", type=Path, help="Check the configured ACP command without starting it")
     doctor = sub.add_parser("doctor", help="Check local agent readiness without a model turn")
-    doctor.add_argument("agent_id", nargs="?", help="Built-in or BRIDGE_AGENTS_JSON agent ID")
+    doctor.add_argument("agent_id", nargs="?", help="Built-in or AGENT_SHUTTLE_AGENTS_JSON agent ID")
     doctor.add_argument("--profile", type=Path, help="Check one JSON agent profile")
     doctor.add_argument("--smoke", action="store_true", help="Run one model turn with the safest enforced policy")
     doctor.add_argument("--json", action="store_true", help="Print a machine-readable diagnostic report")
@@ -100,7 +101,7 @@ def main() -> None:
         return
     if args.command == "ask":
         result = asyncio.run(
-            BridgeClient().ask(
+            ShuttleClient().ask(
                 args.url,
                 args.prompt,
                 model=args.model,
@@ -112,7 +113,7 @@ def main() -> None:
         print(result.text)
         return
     if args.command == "info":
-        print(json.dumps(asyncio.run(BridgeClient().info(args.url)), ensure_ascii=False, indent=2))
+        print(json.dumps(asyncio.run(ShuttleClient().info(args.url)), ensure_ascii=False, indent=2))
         return
     if args.agy_dangerously_skip_permissions and (args.agent != "antigravity" or args.agy_mode != "cli"):
         parser.error("--agy-dangerously-skip-permissions requires serve antigravity --agy-mode cli")
@@ -124,6 +125,7 @@ def main() -> None:
         profile = AgentProfile.from_file(args.profile, workspace_override=args.workspace)
         backend, info_provider = build_profile(profile)
         name = profile.id
+        backend_factory = lambda path: build_profile(replace(profile, workspace=path))[0]
     else:
         if args.profile is not None:
             parser.error("--profile is only valid with serve profile")
@@ -138,6 +140,12 @@ def main() -> None:
             dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
             turn_timeout_seconds=args.agy_turn_timeout_seconds or 300,
         )
+        backend_factory = lambda path: build_builtin(
+            args.agent, path, command=args.agy_command, mode=args.agy_mode,
+            python=args.agy_python,
+            dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
+            turn_timeout_seconds=args.agy_turn_timeout_seconds or 300,
+        )[0]
     url = f"http://127.0.0.1:{args.port}"
     store = None
     if args.task_db is not None:
@@ -146,6 +154,7 @@ def main() -> None:
     app = make_app(name, backend, url, info_provider, task_store=store,
                    execution_timeout_seconds=args.execution_timeout_seconds,
                    stall_timeout_seconds=args.stall_timeout_seconds,
+                   backend_factory=backend_factory,
                    publish_credential=True)
     _run_server(app, args.port)
 

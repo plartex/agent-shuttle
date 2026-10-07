@@ -59,7 +59,7 @@ class OpenCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.method, "POST")
         payload = __import__("json").loads(request.content)
         self.assertEqual(payload["model"], {"providerID": "ollama", "modelID": "test"})
-        self.assertEqual(payload["agent"], "bridge")
+        self.assertEqual(payload["agent"], "shuttle")
         self.assertEqual(payload["parts"], [{"type": "text", "text": "inspect code"}])
         self.assertTrue(all(enabled is False for enabled in payload["tools"].values()))
         await session.close()
@@ -202,7 +202,7 @@ class OpenCodeRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs["env"]["OPENCODE_SERVER_PASSWORD"])
         config = json.loads(kwargs["env"]["OPENCODE_CONFIG_CONTENT"])
         self.assertEqual(config["permission"], {"*": "deny"})
-        self.assertNotIn("steps", config["agent"]["bridge"])
+        self.assertNotIn("steps", config["agent"]["shuttle"])
         self.assertEqual(config["provider"]["ollama"]["options"]["baseURL"],
                          "http://127.0.0.1:11434/v1")
 
@@ -217,7 +217,7 @@ class OpenCodeConfigTests(unittest.TestCase):
             })
             config = json.loads(_inline_config(profile, ToolPolicy.FULL_ACCESS))
             self.assertEqual(config["permission"], {"*": "allow"})
-            self.assertNotIn("read-only", config["agent"]["bridge"]["prompt"])
+            self.assertNotIn("read-only", config["agent"]["shuttle"]["prompt"])
 
     @unittest.skipUnless(os.name == "nt", "Windows npm shim")
     def test_windows_npm_shim_resolves_real_executable(self):

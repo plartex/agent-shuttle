@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from a2a.helpers import new_text_message, new_text_part
 from a2a.types import Task, TaskStatus, TaskState, Artifact
 
-from agent_shuttle.client import BridgeClient, _task_result
+from agent_shuttle.client import ShuttleClient, _task_result
 
 
 class TaskPagesTests(unittest.IsolatedAsyncioTestCase):
@@ -15,7 +15,7 @@ class TaskPagesTests(unittest.IsolatedAsyncioTestCase):
                          artifacts=[Artifact(artifact_id="a", parts=[new_text_part("abcdef")])])
 
     async def test_result_pages_are_bounded_and_reconstruct_exact_text(self):
-        client = BridgeClient()
+        client = ShuttleClient()
         with patch.object(client, "_get_task", new=AsyncMock(return_value=self.task)):
             first = await client.task("url", "task").result_page(limit=3)
             second = await client.task("url", "task").result_page(cursor=first["next_cursor"], limit=3)
@@ -24,7 +24,7 @@ class TaskPagesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["state"], "TASK_STATE_COMPLETED")
 
     async def test_transcript_includes_prompt_and_artifact_with_stable_pagination(self):
-        client = BridgeClient()
+        client = ShuttleClient()
         with patch.object(client, "_get_task", new=AsyncMock(return_value=self.task)):
             first = await client.task("url", "task").transcript(limit=1)
             second = await client.task("url", "task").transcript(cursor=first["next_cursor"], limit=1)
@@ -33,7 +33,7 @@ class TaskPagesTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(second["next_cursor"])
 
     async def test_page_arguments_and_nonfinite_wait_budgets_are_rejected(self):
-        handle = BridgeClient().task("url", "task")
+        handle = ShuttleClient().task("url", "task")
         for kwargs in ({"limit": 0}, {"limit": 60001}, {"cursor": -1}, {"cursor": "invalid"}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 await handle.result_page(**kwargs)
@@ -43,13 +43,13 @@ class TaskPagesTests(unittest.IsolatedAsyncioTestCase):
 
     def test_structured_error_is_available_without_parsing_display_text(self):
         self.task.status.state = TaskState.TASK_STATE_FAILED
-        self.task.metadata["agent_bridge.error"] = {"code": "worker_timeout", "type": "TimeoutError", "retryable": False}
+        self.task.metadata["agent_shuttle.error"] = {"code": "worker_timeout", "type": "TimeoutError", "retryable": False}
         result = _task_result("url", self.task)
         self.assertEqual(result.error["code"], "worker_timeout")
 
     async def test_large_transcript_event_is_chunked_without_loss_and_pages_stay_bounded(self):
         self.task.history[0].parts[0].text = "x" * 150000
-        client = BridgeClient()
+        client = ShuttleClient()
         collected, cursor = [], 0
         with patch.object(client, "_get_task", new=AsyncMock(return_value=self.task)):
             while cursor is not None:

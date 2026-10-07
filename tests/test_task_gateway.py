@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from agent_shuttle.client import BridgeClient, BridgeResult, TaskHandle
+from agent_shuttle.client import ShuttleClient, ShuttleResult, TaskHandle
 from agent_shuttle.managed import HarnessLaunch
 from agent_shuttle.mcp_tasks import TaskGateway
 
@@ -22,10 +22,10 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                 closed.append(launch.url)
 
         with tempfile.TemporaryDirectory() as folder:
-            client = BridgeClient(credentials={"http://127.0.0.1:1234": "secret-marker"})
+            client = ShuttleClient(credentials={"http://127.0.0.1:1234": "secret-marker"})
             client.submit = AsyncMock(return_value=TaskHandle(client, "http://127.0.0.1:1234", "job", "context"))
-            client.task_status = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_WORKING", ""))
-            client.cancel_task = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_CANCELED", ""))
+            client.task_status = AsyncMock(return_value=ShuttleResult("url", "job", "context", "TASK_STATE_WORKING", ""))
+            client.cancel_task = AsyncMock(return_value=ShuttleResult("url", "job", "context", "TASK_STATE_CANCELED", ""))
             gateway = TaskGateway(Path(folder) / "registry.json", client=client)
             launch = HarnessLaunch("antigravity", "http://127.0.0.1:1234", Path(folder), tool_policy="read_only")
             with patch("agent_shuttle.mcp_tasks.connect_harness", connect):
@@ -43,9 +43,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             yield SimpleNamespace(url=launch.url)
 
         with tempfile.TemporaryDirectory() as folder:
-            client = BridgeClient(credentials={"http://127.0.0.1:1234": "secret-marker"})
+            client = ShuttleClient(credentials={"http://127.0.0.1:1234": "secret-marker"})
             client.submit = AsyncMock(return_value=TaskHandle(client, "http://127.0.0.1:1234", "job", "context"))
-            client.task_status = AsyncMock(return_value=BridgeResult("url", "job", "context", "TASK_STATE_COMPLETED", "done"))
+            client.task_status = AsyncMock(return_value=ShuttleResult("url", "job", "context", "TASK_STATE_COMPLETED", "done"))
             path = Path(folder) / "registry.json"
             launch = HarnessLaunch("antigravity", "http://127.0.0.1:1234", Path(folder), tool_policy="read_only")
             with patch("agent_shuttle.mcp_tasks.connect_harness", connect):

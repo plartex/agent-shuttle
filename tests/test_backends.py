@@ -720,7 +720,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 return b"", (
                     b"error getting token source: You are not logged into Antigravity.\n"
                     b"Failed to write server states: open "
-                    b"C:/Users/test/.gemini/antigravity-cli/mcp/agent-bridge/ask_agent.json.tmp: "
+                    b"C:/Users/test/.gemini/antigravity-cli/mcp/agent-shuttle/ask_agent.json.tmp: "
                     b"Access is denied.\n"
                     b"Print mode: auth timed out\n"
                     b"Error: authentication timed out."
@@ -877,12 +877,12 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 return self.output, b""
 
         backend = AntigravitySdkBackend(Path.cwd(), Path(sys.executable))
-        success = Process(b'noise\nAGENT_BRIDGE_RESULT={"ok": true, "text": "reply"}\n')
+        success = Process(b'noise\nAGENT_SHUTTLE_RESULT={"ok": true, "text": "reply"}\n')
         with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=success):
             self.assertEqual(await backend.run("hello", "model"), "reply")
         self.assertEqual(success.payload["model"], "model")
 
-        failure = Process(b'AGENT_BRIDGE_RESULT={"ok": false, "error": "denied"}\n')
+        failure = Process(b'AGENT_SHUTTLE_RESULT={"ok": false, "error": "denied"}\n')
         with patch("agent_shuttle.backends.asyncio.create_subprocess_exec", return_value=failure):
             with self.assertRaisesRegex(RuntimeError, "denied"):
                 await backend.run("hello")

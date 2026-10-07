@@ -6,30 +6,30 @@ This guide covers common operational issues, diagnostic procedures, error messag
 
 ---
 
-## Diagnosing Antigravity CLI vs. Bridge
+## Diagnosing Antigravity CLI vs. Shuttle
 
 When an Antigravity task fails or appears to hang, it is crucial to determine whether the issue lies in Agent Shuttle or the upstream `agy` CLI.
 
-### 1. Test Bridge Liveness First (`/bridge/identity`)
+### 1. Test Shuttle Liveness First (`/shuttle/identity`)
 
-The `/bridge/identity` endpoint responds **without** spawning `agy` or querying Google model endpoints.
+The `/shuttle/identity` endpoint responds **without** spawning `agy` or querying Google model endpoints.
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8766/bridge/identity
+Invoke-RestMethod http://127.0.0.1:8766/shuttle/identity
 ```
 
-- **If `/bridge/identity` responds immediately:**  
-  The Bridge HTTP server and process manager are functioning correctly. Any delay or failure in an ongoing `ask()` request is occurring inside the upstream `agy` CLI process, network communication with Google's servers, or tool execution.
-- **If `/bridge/identity` returns 404:**  
-  The running server is an older Bridge version. Stop the process and restart it with the current release.
-- **If `/bridge/identity` times out or fails to connect:**  
-  A persistent Bridge process may be stopped, blocked by a local firewall, or hung. Inspect the terminal where you ran `agent-shuttle serve antigravity --workspace . --port 8766`. If you use MCP without a persistent server, no listener is expected between requests.
+- **If `/shuttle/identity` responds immediately:**\
+  The Shuttle HTTP server and process manager are functioning correctly. Any delay or failure in an ongoing `ask()` request is occurring inside the upstream `agy` CLI process, network communication with Google's servers, or tool execution.
+- **If `/shuttle/identity` returns 404:**\
+  The running server is an older Shuttle version. Stop the process and restart it with the current release.
+- **If `/shuttle/identity` times out or fails to connect:**\
+  A persistent Shuttle process may be stopped, blocked by a local firewall, or hung. Inspect the terminal where you ran `agent-shuttle serve antigravity --workspace . --port 8766`. If you use MCP without a persistent server, no listener is expected between requests.
 
 ---
 
 ### Authentication belongs to the CLI process, not the desktop app
 
-`AntigravityAuthenticationError` means `agy` could not use its account in the context where Bridge launched it. If the diagnostic mentions `Access is denied` under `.gemini/antigravity-cli`, a restricted or sandboxed launcher is a likely cause; it does **not** prove that the user is signed out. Check with `agy models` in an ordinary terminal under the same Windows account. If that succeeds, run `agent-shuttle serve antigravity --workspace . --port 8766` from that terminal rather than from a sandboxed executor, and retry the task. If it also fails, start `agy` interactively and complete its sign-in flow. Do not copy credentials into the project or disable sandboxing globally.
+`AntigravityAuthenticationError` means `agy` could not use its account in the context where Shuttle launched it. If the diagnostic mentions `Access is denied` under `.gemini/antigravity-cli`, a restricted or sandboxed launcher is a likely cause; it does **not** prove that the user is signed out. Check with `agy models` in an ordinary terminal under the same Windows account. If that succeeds, run `agent-shuttle serve antigravity --workspace . --port 8766` from that terminal rather than from a sandboxed executor, and retry the task. If it also fails, start `agy` interactively and complete its sign-in flow. Do not copy credentials into the project or disable sandboxing globally.
 
 ---
 
@@ -43,7 +43,7 @@ In headless mode (`-p`), the Antigravity CLI cannot prompt the user interactivel
 
 **Resolution:**
 
-For MCP calls, Agent Shuttle defaults to the verified `read_only` task gate. A coordinator delegating an authorized edit should select `workspace_write`; no global allowlist is required. An error naming `task policy ... denied tools` comes from that gate: shell, MCP, subagents and external paths remain blocked. Run relevant test commands in the coordinator's authorized environment. If the policy probe fails, the user task was not sent; check the installed CLI's hook support and the bridge diagnostic instead of widening access.
+For MCP calls, Agent Shuttle defaults to the verified `read_only` task gate. A coordinator delegating an authorized edit should select `workspace_write`; no global allowlist is required. An error naming `task policy ... denied tools` comes from that gate: shell, MCP, subagents and external paths remain blocked. Run relevant test commands in the coordinator's authorized environment. If the policy probe fails, the user task was not sent; check the installed CLI's hook support and the shuttle diagnostic instead of widening access.
 
 For legacy Python/A2A calls with `tool_policy=None`, native CLI settings apply:
 
@@ -86,13 +86,13 @@ Agent Shuttle detects this specific retryable error pattern and automatically re
 ### 5. Concurrent Metadata Query Contention
 
 **Symptom:**  
-Simultaneous calls to `/bridge/info` or `/bridge/capabilities` hang or fail.
+Simultaneous calls to `/shuttle/info` or `/shuttle/capabilities` hang or fail.
 
 **Root Cause:**  
 Upstream `agy` uses shared local session locks. Running multiple concurrent CLI commands (`models`, `/model`, `/effort`, `/usage`) simultaneously can cause CLI lock contention.
 
 **Resolution:**  
-Agent Shuttle serializes all Antigravity metadata queries under an internal `asyncio.Lock` with a 45-second per-command timeout. Do not bypass Bridge to invoke multiple headless CLI processes concurrently in the same workspace.
+Agent Shuttle serializes all Antigravity metadata queries under an internal `asyncio.Lock` with a 45-second per-command timeout. Do not bypass Shuttle to invoke multiple headless CLI processes concurrently in the same workspace.
 
 ---
 

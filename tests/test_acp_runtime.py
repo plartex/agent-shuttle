@@ -13,7 +13,7 @@ import uvicorn
 
 from agent_shuttle.acp_runtime import ADVISORY_WARNING, AcpRuntime, _Client
 from agent_shuttle.a2a_server import make_app
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from agent_shuttle.profiled import ProfiledBackend, ProfiledInfo
 from agent_shuttle.profiles import AgentProfile, ProfileSelection, ToolPolicy
 from agent_shuttle.task_library import TaskManager
@@ -98,7 +98,7 @@ class AcpRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0.03)
                 else:
                     self.fail("ACP A2A server did not start")
-            client = BridgeClient()
+            client = ShuttleClient()
             identity = await client.identity(url)
             self.assertEqual(identity["tool_policy_enforcement"], "advisory")
             self.assertFalse(identity["read_only_tools"])

@@ -11,7 +11,7 @@ from unittest.mock import patch
 import httpx
 
 from agent_shuttle.a2a_server import make_app
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from agent_shuttle.local_auth import (LocalCredential, PeerAuthenticationError, _windows_acl,
                                       read_local_credential)
 
@@ -26,18 +26,19 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(card.status_code, 200)
             self.assertIn("agentShuttleBearer", card.json()["securitySchemes"])
             self.assertNotIn("workspace", card.text)
-            self.assertEqual((await client.get("/bridge/identity")).status_code, 401)
+            self.assertEqual((await client.get("/shuttle/identity")).status_code, 401)
             self.assertEqual((await client.post("/", json={})).status_code, 401)
-            self.assertEqual((await client.get("/bridge/identity", headers={
+            self.assertEqual((await client.get("/shuttle/identity", headers={
                 "Authorization": "Bearer wrong"})).status_code, 401)
             valid = {"Authorization": "Bearer " + credential.token}
-            self.assertEqual((await client.get("/bridge/identity", headers=valid)).status_code, 200)
-            self.assertEqual((await client.get("/bridge/identity", headers={
+            self.assertEqual((await client.get("/shuttle/identity", headers=valid)).status_code, 200)
+            self.assertEqual((await client.get("/bridge/identity", headers=valid)).status_code, 404)
+            self.assertEqual((await client.get("/shuttle/identity", headers={
                 **valid, "Origin": "null"})).status_code, 403)
-            self.assertEqual((await client.get("/bridge/identity", headers={
+            self.assertEqual((await client.get("/shuttle/identity", headers={
                 **valid, "Host": "127.0.0.1:8766"})).status_code, 421)
             nonce = "A" * 43
-            proof = (await client.get("/bridge/proof", params={"nonce": nonce})).json()
+            proof = (await client.get("/shuttle/proof", params={"nonce": nonce})).json()
             self.assertEqual(proof["signature"], credential.signature(nonce))
 
     async def test_record_rotation_and_ownership(self):
@@ -70,13 +71,13 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
                 with patch("agent_shuttle.client.httpx.AsyncClient",
                            side_effect=lambda **kw: real_client(transport=transport, **kw)):
                     with self.assertRaises(PeerAuthenticationError):
-                        await BridgeClient()._http(record.origin)
+                        await ShuttleClient()._http(record.origin)
                     with self.assertRaises(PeerAuthenticationError):
-                        await BridgeClient(credentials={record.origin: record.token})._http(record.origin)
+                        await ShuttleClient(credentials={record.origin: record.token})._http(record.origin)
                 self.assertEqual(seen_headers, [None, None])
 
     async def test_explicit_token_is_bound_to_origin(self):
-        client = BridgeClient(credentials={"https://peer.example:443": "external-secret"})
+        client = ShuttleClient(credentials={"https://peer.example:443": "external-secret"})
         async with await client._http("https://peer.example:443") as exact:
             self.assertEqual(exact.headers["Authorization"], "Bearer external-secret")
         async with await client._http("https://other.example:443") as other:

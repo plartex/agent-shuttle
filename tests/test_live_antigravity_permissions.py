@@ -2,7 +2,7 @@
 
 This invokes a real signed-in model with unrestricted tool approval. It is never
 part of the default offline test run; enable it deliberately with
-BRIDGE_LIVE_AGY_FULL_ACCESS=1.
+AGENT_SHUTTLE_LIVE_AGY_FULL_ACCESS=1.
 """
 
 import asyncio
@@ -14,23 +14,23 @@ import uuid
 from pathlib import Path
 from time import monotonic
 
-from agent_shuttle import BridgeClient, HarnessLaunch, connect_harness, discover_harnesses
+from agent_shuttle import ShuttleClient, HarnessLaunch, connect_harness, discover_harnesses
 from agent_shuttle.backends import AntigravityCliBackend
 
 
 @unittest.skipUnless(
-    os.environ.get("BRIDGE_LIVE_AGY_FULL_ACCESS") == "1",
-    "requires explicit BRIDGE_LIVE_AGY_FULL_ACCESS=1 opt-in",
+    os.environ.get("AGENT_SHUTTLE_LIVE_AGY_FULL_ACCESS") == "1",
+    "requires explicit AGENT_SHUTTLE_LIVE_AGY_FULL_ACCESS=1 opt-in",
 )
 class LiveAntigravityPermissionsTests(unittest.IsolatedAsyncioTestCase):
     @unittest.skipUnless(
-        os.environ.get("BRIDGE_LIVE_AGY_STREAM_FULL_ACCESS") == "1",
-        "requires separate BRIDGE_LIVE_AGY_STREAM_FULL_ACCESS=1 opt-in",
+        os.environ.get("AGENT_SHUTTLE_LIVE_AGY_STREAM_FULL_ACCESS") == "1",
+        "requires separate AGENT_SHUTTLE_LIVE_AGY_STREAM_FULL_ACCESS=1 opt-in",
     )
     async def test_full_permissions_execute_command_in_stream_session(self):
-        command = os.environ.get("BRIDGE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
+        command = os.environ.get("AGENT_SHUTTLE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
         if not command:
-            self.fail("agy executable not found; set BRIDGE_LIVE_AGY_COMMAND")
+            self.fail("agy executable not found; set AGENT_SHUTTLE_LIVE_AGY_COMMAND")
 
         root = Path(__file__).resolve().parents[1] / ".runtime" / (
             "agy-full-access-stream-" + uuid.uuid4().hex[:12]
@@ -58,9 +58,9 @@ class LiveAntigravityPermissionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(marker.read_text(encoding="utf-8"), nonce)
 
     async def test_full_permissions_execute_command_direct_backend(self):
-        command = os.environ.get("BRIDGE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
+        command = os.environ.get("AGENT_SHUTTLE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
         if not command:
-            self.fail("agy executable not found; set BRIDGE_LIVE_AGY_COMMAND")
+            self.fail("agy executable not found; set AGENT_SHUTTLE_LIVE_AGY_COMMAND")
 
         root = Path(__file__).resolve().parents[1] / ".runtime" / (
             "agy-full-access-backend-" + uuid.uuid4().hex[:12]
@@ -85,13 +85,13 @@ class LiveAntigravityPermissionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(marker.read_text(encoding="utf-8"), nonce)
 
     @unittest.skipUnless(
-        os.environ.get("BRIDGE_LIVE_AGY_A2A_FULL_ACCESS") == "1",
-        "requires separate BRIDGE_LIVE_AGY_A2A_FULL_ACCESS=1 opt-in",
+        os.environ.get("AGENT_SHUTTLE_LIVE_AGY_A2A_FULL_ACCESS") == "1",
+        "requires separate AGENT_SHUTTLE_LIVE_AGY_A2A_FULL_ACCESS=1 opt-in",
     )
-    async def test_full_permissions_execute_command_through_bridge(self):
-        command = os.environ.get("BRIDGE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
+    async def test_full_permissions_execute_command_through_shuttle(self):
+        command = os.environ.get("AGENT_SHUTTLE_LIVE_AGY_COMMAND") or discover_harnesses().get("antigravity")
         if not command:
-            self.fail("agy executable not found; set BRIDGE_LIVE_AGY_COMMAND")
+            self.fail("agy executable not found; set AGENT_SHUTTLE_LIVE_AGY_COMMAND")
 
         root = Path(__file__).resolve().parents[1] / ".runtime" / (
             "agy-full-access-" + uuid.uuid4().hex[:12]
@@ -105,9 +105,9 @@ class LiveAntigravityPermissionsTests(unittest.IsolatedAsyncioTestCase):
         url = f"http://127.0.0.1:{port}"
         launch = HarnessLaunch(
             "antigravity", url, root, command=command,
-            log_path=root / "bridge.log", agy_dangerously_skip_permissions=True,
+            log_path=root / "shuttle.log", agy_dangerously_skip_permissions=True,
         )
-        client = BridgeClient(timeout_seconds=90)
+        client = ShuttleClient(timeout_seconds=90)
         prompt = (
             "In this empty workspace, call RunCommand to execute exactly this "
             f"PowerShell command: Set-Content -LiteralPath probe.txt -Value {nonce} -NoNewline. "
@@ -123,7 +123,7 @@ class LiveAntigravityPermissionsTests(unittest.IsolatedAsyncioTestCase):
                 result = await client.ask(url, prompt)
 
         trace = {
-            "workspace": str(root), "bridge_log": str(root / "bridge.log"),
+            "workspace": str(root), "shuttle_log": str(root / "shuttle.log"),
             "startup_seconds": startup_seconds,
             "mode": identity["agy_permission_mode"],
             "state": result.state, "response": result.text, "usage": result.usage,
