@@ -9,7 +9,7 @@ from pathlib import Path
 import uvicorn
 from agent_shuttle.a2a_server import make_app
 from agent_shuttle.backends import AntigravityCliBackend, AntigravityPermissionDenied, BackendResponse
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 
 
 class FailedUsageTests(unittest.IsolatedAsyncioTestCase):
@@ -65,7 +65,7 @@ class FailedUsageTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(.01)
                 else:
                     self.fail("A2A server did not start")
-                async with BridgeClient().session(url) as session:
+                async with ShuttleClient().session(url) as session:
                     failed = await session.ask("first")
                     self.assertEqual(failed.state, "TASK_STATE_FAILED")
                     self.assertTrue(failed.error["retryable"])

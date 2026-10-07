@@ -45,8 +45,8 @@ class CliTests(unittest.TestCase):
                 main()
             self.assertEqual(run.call_args.args[1], 8767)
             paths = {route.path for route in run.call_args.args[0].routes}
-            self.assertIn("/bridge/info", paths)
-            self.assertIn("/bridge/identity", paths)
+            self.assertIn("/shuttle/info", paths)
+            self.assertIn("/shuttle/identity", paths)
 
     def test_profile_required_for_profile_runtime(self):
         with patch("sys.argv", ["agent-shuttle", "serve", "profile", "--port", "8767"]):
@@ -77,7 +77,7 @@ class CliTests(unittest.TestCase):
         with patch("sys.argv", ["agent-shuttle", "ask", "http://127.0.0.1:8767", "hello",
                                 "--model", "test", "--reasoning-effort", "high",
                                 "--tool-policy", "no_tools"]), \
-             patch("agent_shuttle.cli.BridgeClient.ask", new_callable=AsyncMock, return_value=result) as ask, \
+             patch("agent_shuttle.cli.ShuttleClient.ask", new_callable=AsyncMock, return_value=result) as ask, \
              patch("builtins.print"):
             main()
         self.assertEqual(ask.call_args.kwargs["tool_policy"], "no_tools")
@@ -85,7 +85,7 @@ class CliTests(unittest.TestCase):
 
     def test_info_prints_json(self):
         with patch("sys.argv", ["agent-shuttle", "info", "http://127.0.0.1:8767"]), \
-             patch("agent_shuttle.cli.BridgeClient.info", new_callable=AsyncMock,
+             patch("agent_shuttle.cli.ShuttleClient.info", new_callable=AsyncMock,
                    return_value={"models": ["local"]}) as info, \
              patch("builtins.print") as output:
             main()

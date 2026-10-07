@@ -28,7 +28,8 @@ class _NativeSession:
 class WorkerLifecycleService:
     def __init__(self, repository: LibraryTaskRepository, events: EventStreamService,
                  backends: dict[str, Any], workspace: Path, database: Path | None,
-                 execution_timeout_seconds: float, stall_timeout_seconds: float):
+                 execution_timeout_seconds: float, stall_timeout_seconds: float,
+                 *, workspace_provider=None, backend_factories: dict | None = None):
         self.repository = repository
         self.events = events
         self.backends = backends
@@ -36,6 +37,8 @@ class WorkerLifecycleService:
         self.database = database
         self.execution_timeout_seconds = execution_timeout_seconds
         self.stall_timeout_seconds = stall_timeout_seconds
+        self.workspace_provider = workspace_provider
+        self.backend_factories = backend_factories or {}
         self._active: dict[str, asyncio.Task] = {}
         self._inflight: dict[str, asyncio.Task] = {}
         self._cancel_requested: set[str] = set()
@@ -94,10 +97,12 @@ class WorkerLifecycleService:
 
     async def _execute(self, task_id: str):
         row = self.repository.task(task_id)
+        change = self.repository.change(task_id)
         self.repository.update_task(task_id, "working")
         deadline = monotonic() + self.execution_timeout_seconds
-        exclusive = sum(not running.done() for running in self._active.values()) <= 1
+        exclusive = change is None and sum(not running.done() for running in self._active.values()) <= 1
         running = None
+        isolated_backend = None
         backend_started = False
         native_started = False
         last_activity = None
@@ -108,8 +113,10 @@ class WorkerLifecycleService:
             await self.events.publish_backend_event(task_id, event)
 
         async def invoke():
-            nonlocal backend_started, native_started, last_activity
-            backend = self.backends[row["agent_id"]]
+            nonlocal backend_started, native_started, last_activity, isolated_backend
+            if change is not None:
+                isolated_backend = self.backend_factories[row["agent_id"]](Path(change["workspace_path"]))
+            backend = isolated_backend or self.backends[row["agent_id"]]
             kwargs = {"reasoning_effort": row["reasoning_effort"],
                       "read_only": row["tool_policy"] == "read_only"}
             target = backend.open_session if row["session_id"] else backend.run
@@ -228,6 +235,23 @@ class WorkerLifecycleService:
                                         usage=getattr(exc, "usage", None),
                                         details=getattr(exc, "details", None))
         finally:
+            if isolated_backend is not None:
+                close = getattr(isolated_backend, "close", None)
+                if close is not None:
+                    try:
+                        result = close()
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception:
+                        pass
+            if change is not None:
+                try:
+                    completed = self.repository.task(task_id)["state"] == "completed"
+                    captured = await asyncio.to_thread(self.workspace_provider.capture, change,
+                                                       partial=not completed)
+                    self.repository.save_change(captured)
+                except Exception as exc:
+                    self.repository.set_change_state(task_id, "inspection_required", str(exc))
             self._inflight.pop(task_id, None)
             self._cancel_requested.discard(task_id)
             if row["session_id"]:

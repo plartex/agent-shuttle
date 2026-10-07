@@ -8,6 +8,8 @@ import sqlite3
 from pathlib import Path
 from time import time
 
+from .metadata_migration import backup_database, rename_json_metadata
+
 
 class LibraryTaskRepository:
     """Own the library database, its schema, lock and all SQL transactions."""
@@ -20,6 +22,7 @@ class LibraryTaskRepository:
     def open(self) -> None:
         if self._conn is not None:
             raise RuntimeError("LibraryTaskRepository is already open")
+        existed = self.path is not None and self.path.exists()
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         owner = (self.path.with_suffix(self.path.suffix + ".owner").open("a+b")
@@ -39,6 +42,11 @@ class LibraryTaskRepository:
                     fcntl.flock(owner.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             conn = sqlite3.connect(self.path or ":memory:", timeout=15)
             conn.row_factory = sqlite3.Row
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > 1:
+                raise RuntimeError(f"Unsupported library database schema version {version}")
+            if version == 0 and existed:
+                backup_database(self.path)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -66,6 +74,12 @@ class LibraryTaskRepository:
                 CREATE TABLE IF NOT EXISTS preferences (
                     agent_id TEXT PRIMARY KEY, model TEXT, reasoning_effort TEXT
                 );
+                CREATE TABLE IF NOT EXISTS task_changes (
+                    task_id TEXT PRIMARY KEY, state TEXT NOT NULL,
+                    workspace_path TEXT NOT NULL, base_oid TEXT NOT NULL,
+                    result_oid TEXT, revision TEXT, files TEXT NOT NULL DEFAULT '[]',
+                    error TEXT, partial INTEGER NOT NULL DEFAULT 0
+                );
             """)
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
             if "native_id" not in columns:
@@ -74,12 +88,36 @@ class LibraryTaskRepository:
                 conn.execute("ALTER TABLE sessions ADD COLUMN resume_supported INTEGER NOT NULL DEFAULT 0")
                 conn.execute("UPDATE sessions SET resume_supported=1 WHERE native_id IS NOT NULL")
             task_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+            change_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_changes)")}
+            if "partial" not in change_columns:
+                conn.execute("ALTER TABLE task_changes ADD COLUMN partial INTEGER NOT NULL DEFAULT 0")
             if "warnings" not in task_columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN warnings TEXT")
             for table in ("tasks", "sessions"):
                 existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
                 if "output_schema" not in existing:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN output_schema TEXT")
+            conn.commit()
+            if version == 0:
+                conn.execute("BEGIN IMMEDIATE")
+                for task_id, seq, raw in conn.execute(
+                    "SELECT task_id, seq, data FROM events"
+                ).fetchall():
+                    if "agent_bridge." in raw:
+                        conn.execute(
+                            "UPDATE events SET data=? WHERE task_id=? AND seq=?",
+                            (rename_json_metadata(raw), task_id, seq),
+                        )
+                for column in ("usage", "details", "error", "warnings"):
+                    for task_id, raw in conn.execute(
+                        f"SELECT id, {column} FROM tasks WHERE {column} IS NOT NULL"
+                    ).fetchall():
+                        if "agent_bridge." in raw:
+                            conn.execute(
+                                f"UPDATE tasks SET {column}=? WHERE id=?",
+                                (rename_json_metadata(raw), task_id),
+                            )
+                conn.execute("PRAGMA user_version=1")
             conn.commit()
             self._owner, self._conn = owner, conn
         except BaseException:
@@ -127,6 +165,36 @@ class LibraryTaskRepository:
     def task_by_request(self, request_id: str):
         return self._record(self._db().execute(
             "SELECT id, fingerprint FROM tasks WHERE request_id=?", (request_id,)).fetchone())
+
+    def change(self, task_id: str):
+        row = self._record(self._db().execute(
+            "SELECT * FROM task_changes WHERE task_id=?", (task_id,)).fetchone())
+        if row is not None:
+            row["files"] = json.loads(row["files"])
+            row["partial"] = bool(row["partial"])
+        return row
+
+    def list_changes(self, state: str | None = None):
+        query = "SELECT task_id FROM task_changes" + (" WHERE state=?" if state else "")
+        return [self.change(row[0]) for row in self._db().execute(query, (state,) if state else ())]
+
+    def save_change(self, change: dict) -> None:
+        self._db().execute("""INSERT INTO task_changes
+            (task_id,state,workspace_path,base_oid,result_oid,revision,files,error,partial)
+            VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET
+            state=excluded.state, workspace_path=excluded.workspace_path,
+            base_oid=excluded.base_oid, result_oid=excluded.result_oid,
+            revision=excluded.revision, files=excluded.files, error=excluded.error,
+            partial=excluded.partial""",
+            (change["task_id"], change["state"], change["workspace_path"],
+             change["base_oid"], change.get("result_oid"), change.get("revision"),
+             json.dumps(change.get("files", [])), change.get("error"), int(change.get("partial", False))))
+        self._db().commit()
+
+    def set_change_state(self, task_id: str, state: str, error: str | None = None) -> None:
+        self._db().execute("UPDATE task_changes SET state=?, error=? WHERE task_id=?",
+                           (state, error, task_id))
+        self._db().commit()
 
     def list_tasks(self, session_id: str | None = None):
         if session_id is None:

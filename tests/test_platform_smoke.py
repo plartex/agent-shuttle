@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from agent_shuttle import HarnessLaunch, connect_harness
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from agent_shuttle.managed import HarnessConfigurationMismatch
 from agent_shuttle.process_lifecycle import spawn_options, stop_async_process, stop_sync_process
 
@@ -101,7 +101,7 @@ class PlatformSmokeTests(unittest.IsolatedAsyncioTestCase):
                 port = probe.getsockname()[1]
             url = f"http://127.0.0.1:{port}"
             launch = HarnessLaunch("acp", url, workspace, profile_path=profile)
-            client = BridgeClient()
+            client = ShuttleClient()
             async with connect_harness(launch, client=client) as connection:
                 self.assertTrue(connection.started)
                 identity = await client.identity(url)

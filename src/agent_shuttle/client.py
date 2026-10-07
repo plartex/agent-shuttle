@@ -35,7 +35,7 @@ _DEFAULT_TIMEOUT = object()
 
 
 @dataclass(frozen=True)
-class BridgeResult:
+class ShuttleResult:
     peer: str
     task_id: str | None
     context_id: str | None
@@ -47,7 +47,7 @@ class BridgeResult:
 
 
 @dataclass(frozen=True)
-class BridgeEvent:
+class ShuttleEvent:
     kind: str
     task_id: str
     state: str | None = None
@@ -65,21 +65,21 @@ _TERMINAL_STATES = frozenset({
 class TaskHandle:
     """A task identifier that remains usable after the submitting call returns."""
 
-    client: "BridgeClient"
+    client: "ShuttleClient"
     peer_url: str
     task_id: str
     context_id: str | None
 
-    async def status(self) -> BridgeResult:
+    async def status(self) -> ShuttleResult:
         return await self.client.task_status(self.peer_url, self.task_id)
 
-    async def wait(self, timeout: float | None = None) -> BridgeResult:
+    async def wait(self, timeout: float | None = None) -> ShuttleResult:
         """Wait for a settled task; a wait timeout never cancels execution."""
         if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                                     or not math.isfinite(timeout) or timeout < 0):
             raise ValueError("timeout must be finite and non-negative")
         deadline = None if timeout is None else monotonic() + timeout
-        last = BridgeResult(self.peer_url, self.task_id, self.context_id,
+        last = ShuttleResult(self.peer_url, self.task_id, self.context_id,
                             "TASK_STATE_SUBMITTED", "")
         while True:
             if deadline is None:
@@ -100,25 +100,46 @@ class TaskHandle:
             delay = 0.2 if deadline is None else min(0.2, max(0, deadline - monotonic()))
             await asyncio.sleep(delay)
 
-    async def result(self) -> BridgeResult:
+    async def result(self) -> ShuttleResult:
         return await self.wait()
 
-    async def cancel(self) -> BridgeResult:
+    async def cancel(self) -> ShuttleResult:
         return await self.client.cancel_task(self.peer_url, self.task_id)
 
-    async def events(self) -> AsyncIterator[BridgeEvent]:
+    async def events(self) -> AsyncIterator[ShuttleEvent]:
         """Observe live A2A updates; use status() to recover after disconnect."""
         async for event in self.client.task_events(self.peer_url, self.task_id):
             yield event
 
+    async def events_page(self, cursor: int = 0, limit: int = 100) -> dict:
+        """Read Shuttle's ordered event journal from a sequence cursor."""
+        return await self.client.task_events_page(self.peer_url, self.task_id, cursor, limit)
+
+    async def event_page(self, seq: int, cursor: int = 0, limit: int = 60000) -> dict:
+        """Read a full journal event whose preview was truncated."""
+        return await self.client.task_event_page(self.peer_url, self.task_id, seq, cursor, limit)
+
     async def result_page(self, cursor: int = 0, limit: int = 60000) -> dict:
         return await self.client.task_result_page(self.peer_url, self.task_id, cursor, limit)
+
+    async def changes(self) -> dict:
+        return await self.client.task_changes(self.peer_url, self.task_id)
+
+    async def diff(self, cursor: int = 0, limit: int = 60000) -> dict:
+        return await self.client.task_diff(self.peer_url, self.task_id, cursor, limit)
+
+    async def apply_changes(self, expected_revision: str, *, allow_partial: bool = False) -> dict:
+        return await self.client.apply_task_changes(self.peer_url, self.task_id,
+                                                    expected_revision, allow_partial=allow_partial)
+
+    async def discard_changes(self) -> dict:
+        return await self.client.discard_task_changes(self.peer_url, self.task_id)
 
     async def transcript(self, cursor: int = 0, limit: int = 100) -> dict:
         return await self.client.task_transcript(self.peer_url, self.task_id, cursor, limit)
 
 
-class BridgeClient:
+class ShuttleClient:
     def __init__(self, timeout_seconds: float = 1800, *, credentials: dict[str, str] | None = None):
         self.timeout_seconds = timeout_seconds
         self.credentials = credentials or {}
@@ -138,7 +159,7 @@ class BridgeClient:
             try:
                 async with httpx.AsyncClient(timeout=min(self.timeout_seconds, 10),
                                              trust_env=False) as probe:
-                    response = await probe.get(origin + "/bridge/proof", params={"nonce": nonce})
+                    response = await probe.get(origin + "/shuttle/proof", params={"nonce": nonce})
                     response.raise_for_status()
                     proof = response.json()
             except (httpx.HTTPError, ValueError) as exc:
@@ -173,32 +194,32 @@ class BridgeClient:
 
     async def info(self, peer_url: str) -> dict:
         """Read the peer's current model catalog, effort options, and account quotas."""
-        return await self._get(peer_url, "/bridge/info")
+        return await self._get(peer_url, "/shuttle/info")
 
     async def identity(self, peer_url: str) -> dict:
         """Read local server identity and safety mode without starting a model CLI."""
         try:
             return await asyncio.wait_for(
-                self._get(peer_url, "/bridge/identity"),
+                self._get(peer_url, "/shuttle/identity"),
                 timeout=min(self.timeout_seconds, 10.0),
             )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 401:
                 raise PeerAuthenticationError(
-                    f"Bridge at {peer_url} requires Bearer authentication; update the client "
+                    f"Shuttle at {peer_url} requires Bearer authentication; update the client "
                     "and restart an old unprotected server"
                 ) from exc
             if exc.response.status_code == 404:
                 raise ValueError(
-                    f"Bridge at {peer_url} lacks /bridge/identity; restart it with the current version"
+                    f"Shuttle at {peer_url} lacks /shuttle/identity; restart it with the current version"
                 ) from exc
             raise
 
     async def capabilities(self, peer_url: str) -> dict:
-        return await self._get(peer_url, "/bridge/capabilities")
+        return await self._get(peer_url, "/shuttle/capabilities")
 
     async def usage(self, peer_url: str) -> dict:
-        return await self._get(peer_url, "/bridge/usage")
+        return await self._get(peer_url, "/shuttle/usage")
 
     def session(
         self,
@@ -209,15 +230,15 @@ class BridgeClient:
         read_only: bool = False,
         tool_policy: str | None = None,
         output_schema: dict | None = None,
-    ) -> "BridgeSession":
+    ) -> "ShuttleSession":
         """Create an isolated conversation; use with ``async with`` for cleanup."""
-        return BridgeSession(self, peer_url, model, reasoning_effort, read_only, tool_policy, output_schema)
+        return ShuttleSession(self, peer_url, model, reasoning_effort, read_only, tool_policy, output_schema)
 
     async def close_session(self, peer_url: str, session_id: str) -> bool:
         require_coordinator()
         async with await self._http(peer_url) as http:
             response = await http.delete(
-                peer_url.rstrip("/") + "/bridge/sessions/" + str(uuid.UUID(session_id))
+                peer_url.rstrip("/") + "/shuttle/sessions/" + str(uuid.UUID(session_id))
             )
             response.raise_for_status()
             return bool(response.json()["closed"])
@@ -228,11 +249,13 @@ class BridgeClient:
         tool_policy: str | None = None, session_id: str | None = None,
         request_id: str | None = None,
         output_schema: dict | None = None,
+        workspace_mode: str = "shared",
     ) -> TaskHandle:
         """Start an A2A task and return its handle before the agent finishes."""
         require_coordinator()
         message = _request_message(prompt, model, reasoning_effort, read_only,
-                                   tool_policy, session_id, request_id, output_schema)
+                                   tool_policy, session_id, request_id, output_schema,
+                                   workspace_mode)
         request = SendMessageRequest(
             message=message,
             configuration=SendMessageConfiguration(return_immediately=True),
@@ -254,7 +277,7 @@ class BridgeClient:
             finally:
                 await client.close()
 
-    async def _task_call(self, peer_url: str, method: str, request) -> BridgeResult:
+    async def _task_call(self, peer_url: str, method: str, request) -> ShuttleResult:
         return _task_result(peer_url, await self._raw_task_call(peer_url, method, request))
 
     async def _raw_task_call(self, peer_url: str, method: str, request):
@@ -270,7 +293,7 @@ class BridgeClient:
             finally:
                 await client.close()
 
-    async def task_status(self, peer_url: str, task_id: str) -> BridgeResult:
+    async def task_status(self, peer_url: str, task_id: str) -> ShuttleResult:
         return await self._task_call(peer_url, "get_task", GetTaskRequest(id=task_id))
 
     async def _get_task(self, peer_url: str, task_id: str):
@@ -283,6 +306,38 @@ class BridgeClient:
         return {"task_id": task_id, "state": result.state, "text": result.text[cursor:end],
                 "next_cursor": end if end < len(result.text) else None, "total_size": len(result.text),
                 "usage": result.usage, "details": result.details, "error": result.error}
+
+    async def task_changes(self, peer_url: str, task_id: str) -> dict:
+        return await self._get(peer_url, f"/shuttle/tasks/{uuid.UUID(task_id)}/changes")
+
+    async def task_diff(self, peer_url: str, task_id: str, cursor: int = 0,
+                        limit: int = 60000) -> dict:
+        _validate_page(cursor, limit, 60000)
+        async with await self._http(peer_url) as http:
+            response = await http.get(peer_url.rstrip("/") +
+                                      f"/shuttle/tasks/{uuid.UUID(task_id)}/diff",
+                                      params={"cursor": cursor, "limit": limit})
+            response.raise_for_status()
+            return response.json()
+
+    async def apply_task_changes(self, peer_url: str, task_id: str,
+                                 expected_revision: str, *, allow_partial: bool = False) -> dict:
+        require_coordinator()
+        async with await self._http(peer_url) as http:
+            response = await http.post(peer_url.rstrip("/") +
+                                       f"/shuttle/tasks/{uuid.UUID(task_id)}/apply",
+                                       json={"expected_revision": expected_revision,
+                                             "allow_partial": allow_partial})
+            response.raise_for_status()
+            return response.json()
+
+    async def discard_task_changes(self, peer_url: str, task_id: str) -> dict:
+        require_coordinator()
+        async with await self._http(peer_url) as http:
+            response = await http.delete(peer_url.rstrip("/") +
+                                         f"/shuttle/tasks/{uuid.UUID(task_id)}/changes")
+            response.raise_for_status()
+            return response.json()
 
     async def task_transcript(self, peer_url: str, task_id: str, cursor: int = 0, limit: int = 100) -> dict:
         _validate_page(cursor, limit, 100)
@@ -314,7 +369,29 @@ class BridgeClient:
         return {"task_id": task_id, "state": TaskState.Name(task.status.state), "items": items[cursor:end],
                 "next_cursor": end if end < len(items) else None, "total_size": len(items)}
 
-    async def cancel_task(self, peer_url: str, task_id: str) -> BridgeResult:
+    async def task_events_page(self, peer_url: str, task_id: str,
+                               cursor: int = 0, limit: int = 100) -> dict:
+        _validate_page(cursor, limit, 100)
+        async with await self._http(peer_url) as http:
+            response = await http.get(peer_url.rstrip("/") +
+                                      f"/shuttle/tasks/{uuid.UUID(task_id)}/events",
+                                      params={"cursor": cursor, "limit": limit})
+            response.raise_for_status()
+            return response.json()
+
+    async def task_event_page(self, peer_url: str, task_id: str, seq: int,
+                              cursor: int = 0, limit: int = 60000) -> dict:
+        _validate_page(cursor, limit, 60000)
+        if type(seq) is not int or seq < 0:
+            raise ValueError("seq must be nonnegative")
+        async with await self._http(peer_url) as http:
+            response = await http.get(peer_url.rstrip("/") +
+                                      f"/shuttle/tasks/{uuid.UUID(task_id)}/events/{seq}",
+                                      params={"cursor": cursor, "limit": limit})
+            response.raise_for_status()
+            return response.json()
+
+    async def cancel_task(self, peer_url: str, task_id: str) -> ShuttleResult:
         require_coordinator()
         try:
             return await self._task_call(peer_url, "cancel_task", CancelTaskRequest(id=task_id))
@@ -324,7 +401,7 @@ class BridgeClient:
                 return state
             raise
 
-    async def task_events(self, peer_url: str, task_id: str) -> AsyncIterator[BridgeEvent]:
+    async def task_events(self, peer_url: str, task_id: str) -> AsyncIterator[ShuttleEvent]:
         async with await self._http(peer_url, timeout=None) as http:
             client = await create_client(
                 peer_url.rstrip("/"),
@@ -335,15 +412,15 @@ class BridgeClient:
                 async for item in client.subscribe(SubscribeToTaskRequest(id=task_id)):
                     which = item.WhichOneof("payload")
                     if which == "task":
-                        yield BridgeEvent("task", task_id,
+                        yield ShuttleEvent("task", task_id,
                                           TaskState.Name(item.task.status.state), data=MessageToDict(item.task))
                     elif which == "status_update":
                         status = item.status_update.status
-                        yield BridgeEvent("status", task_id, TaskState.Name(status.state),
+                        yield ShuttleEvent("status", task_id, TaskState.Name(status.state),
                                           _parts(status.message.parts) if status.HasField("message") else "",
                                           MessageToDict(item.status_update))
                     elif which == "artifact_update":
-                        yield BridgeEvent("artifact", task_id, text=_parts(item.artifact_update.artifact.parts),
+                        yield ShuttleEvent("artifact", task_id, text=_parts(item.artifact_update.artifact.parts),
                                           data=MessageToDict(item.artifact_update))
             finally:
                 await client.close()
@@ -360,7 +437,7 @@ class BridgeClient:
         session_id: str | None = None,
         request_id: str | None = None,
         output_schema: dict | None = None,
-    ) -> BridgeResult:
+    ) -> ShuttleResult:
         require_coordinator()
         submission = asyncio.create_task(self.submit(
             peer_url, prompt, model, reasoning_effort=reasoning_effort,
@@ -395,12 +472,12 @@ class BridgeClient:
             raise
 
 
-class BridgeSession:
+class ShuttleSession:
     """Reusable per-agent conversation with explicit lifetime and pinned settings."""
 
     def __init__(
         self,
-        client: BridgeClient,
+        client: ShuttleClient,
         peer_url: str,
         model: str | None,
         reasoning_effort: str | None,
@@ -422,18 +499,18 @@ class BridgeSession:
         self._started = False
         self._lock = asyncio.Lock()
 
-    async def __aenter__(self) -> "BridgeSession":
+    async def __aenter__(self) -> "ShuttleSession":
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
 
-    async def ask(self, prompt: str) -> BridgeResult:
+    async def ask(self, prompt: str) -> ShuttleResult:
         async with self._lock:
             if self._closed:
-                raise RuntimeError("Bridge session is closed")
+                raise RuntimeError("Shuttle session is closed")
             if self._tainted:
-                raise RuntimeError("Bridge session was cancelled; start a new session")
+                raise RuntimeError("Shuttle session was cancelled; start a new session")
             self._started = True
             try:
                 return await self.client.ask(
@@ -470,7 +547,7 @@ def _validate_page(cursor, limit, maximum):
 
 
 def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, session_id,
-                     request_id=None, output_schema=None):
+                     request_id=None, output_schema=None, workspace_mode="shared"):
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("prompt must contain text")
     if model is not None and (not isinstance(model, str) or not model.strip()):
@@ -486,6 +563,8 @@ def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, se
             raise ValueError("tool_policy must be no_tools, read_only, workspace_write, or full_access") from exc
         if read_only and tool_policy != ToolPolicy.READ_ONLY.value:
             raise ValueError("read_only conflicts with tool_policy")
+    if workspace_mode not in {"shared", "isolated"}:
+        raise ValueError("workspace_mode must be shared or isolated")
     if session_id is not None:
         session_id = str(uuid.UUID(session_id))
     if request_id is not None:
@@ -493,24 +572,26 @@ def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, se
     message = new_text_message(prompt, context_id=session_id, role=Role.ROLE_USER)
     if request_id is not None:
         message.message_id = request_id
-        message.metadata["agent_bridge.request_id"] = request_id
+        message.metadata["agent_shuttle.request_id"] = request_id
     if model is not None:
-        message.metadata["agent_bridge.model"] = model.strip()
+        message.metadata["agent_shuttle.model"] = model.strip()
     if reasoning_effort is not None:
-        message.metadata["agent_bridge.reasoning_effort"] = reasoning_effort.strip()
+        message.metadata["agent_shuttle.reasoning_effort"] = reasoning_effort.strip()
     if read_only:
-        message.metadata["agent_bridge.read_only"] = True
+        message.metadata["agent_shuttle.read_only"] = True
     if tool_policy is not None:
-        message.metadata["agent_bridge.tool_policy"] = tool_policy
+        message.metadata["agent_shuttle.tool_policy"] = tool_policy
+    if workspace_mode != "shared":
+        message.metadata["agent_shuttle.workspace_mode"] = workspace_mode
     if session_id is not None:
-        message.metadata["agent_bridge.session_id"] = session_id
+        message.metadata["agent_shuttle.session_id"] = session_id
     schema = encode_output_schema(output_schema)
     if schema is not None:
         message.metadata["agent_shuttle.output_schema"] = schema
     return message
 
 
-def _task_result(peer_url, task) -> BridgeResult:
+def _task_result(peer_url, task) -> ShuttleResult:
     state = TaskState.Name(task.status.state)
     content = "\n".join(_parts(artifact.parts) for artifact in task.artifacts).strip()
     usage = None
@@ -522,21 +603,21 @@ def _task_result(peer_url, task) -> BridgeResult:
                      if artifact.HasField("metadata"))
     for artifact_metadata in envelopes:
         if artifact_metadata:
-            candidate = artifact_metadata.get("agent_bridge.usage")
+            candidate = artifact_metadata.get("agent_shuttle.usage")
             if isinstance(candidate, dict):
                 usage = {
                     key: int(value) for key, value in candidate.items()
                     if isinstance(value, (int, float)) and not isinstance(value, bool)
                     and value >= 0 and float(value).is_integer()
                 }
-            candidate_details = artifact_metadata.get("agent_bridge.details")
+            candidate_details = artifact_metadata.get("agent_shuttle.details")
             if isinstance(candidate_details, dict):
                 details = candidate_details
     if not content and task.status.HasField("message"):
         content = _parts(task.status.message.parts)
     metadata = MessageToDict(task.metadata)
-    error = metadata.get("agent_bridge.error")
+    error = metadata.get("agent_shuttle.error")
     if not isinstance(error, dict) and task.status.HasField("message"):
-        error = MessageToDict(task.status.message.metadata).get("agent_bridge.error")
-    return BridgeResult(peer_url, task.id, task.context_id, state, content, usage, details,
+        error = MessageToDict(task.status.message.metadata).get("agent_shuttle.error")
+    return ShuttleResult(peer_url, task.id, task.context_id, state, content, usage, details,
                         error if isinstance(error, dict) else None)

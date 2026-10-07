@@ -109,7 +109,7 @@ agent-shuttle discover
 ```powershell
 agent-shuttle discover --agy-command 'D:\tools\agy.exe'
 # Или через переменную окружения:
-$env:BRIDGE_AGY_COMMAND = 'D:\tools\agy.exe'
+$env:AGENT_SHUTTLE_AGY_COMMAND = 'D:\tools\agy.exe'
 ```
 
 ---
@@ -155,7 +155,7 @@ agent-shuttle serve profile --profile .\examples\claude-code-ollama.json --works
 
 - **Проверка идентификации** (мгновенная, без вызова языковых моделей):
   ```powershell
-  Invoke-RestMethod http://127.0.0.1:8765/bridge/identity
+  Invoke-RestMethod http://127.0.0.1:8765/shuttle/identity
   ```
   Возвращает `{"agent": "codex", "backend": "codex_app_server", "workspace": "C:\\path\\to\\project", ...}`.
 
@@ -208,10 +208,10 @@ tool_timeout_sec = 1800
 env_vars = ["AGENT_SHUTTLE_PARENT_CONTEXT"]
 
 [mcp_servers.agent_shuttle.env]
-BRIDGE_WORKSPACE = "C:/path/to/project"
+AGENT_SHUTTLE_WORKSPACE = "C:/path/to/project"
 ```
 
-Пример TOML подходит клиенту, который читает секции `mcp_servers`. Для клиента с JSON используйте те же значения `command` и `env` в его формате. Для MCP-запросов отдельно запускать `agent-shuttle serve` не нужно: при отсутствии подходящего сервера Agent Shuttle временно запускает его на время вызова. `BRIDGE_WORKSPACE` задаёт проверяемый проект.
+Пример TOML подходит клиенту, который читает секции `mcp_servers`. Для клиента с JSON используйте те же значения `command` и `env` в его формате. Для MCP-запросов отдельно запускать `agent-shuttle serve` не нужно: при отсутствии подходящего сервера Agent Shuttle временно запускает его на время вызова. `AGENT_SHUTTLE_WORKSPACE` задаёт проверяемый проект.
 Codex передаёт маркер worker унаследованному MCP child через `env_vars`. Если другой host очищает окружение MCP child, настройте в нём передачу `AGENT_SHUTTLE_PARENT_CONTEXT`.
 
 После этого инструменты можно вызывать прямо в диалоге с агентом:

@@ -42,7 +42,7 @@ class DiscoveryTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows source checkout executable")
     def test_antigravity_is_found_in_source_checkout_bin(self):
         bundled = Path(discovery.__file__).resolve().parents[2] / "bin" / "agy.exe"
-        with patch.dict(os.environ, {"BRIDGE_AGY_COMMAND": ""}), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGY_COMMAND": ""}), \
              patch("agent_shuttle.discovery.shutil.which", return_value=None), \
              patch("agent_shuttle.discovery._is_file", side_effect=lambda path: path == bundled), \
              patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
@@ -51,7 +51,7 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_antigravity_respects_command_environment_override(self):
         command = str(Path.cwd() / "manual" / "agy")
-        with patch.dict(os.environ, {"BRIDGE_AGY_COMMAND": command}), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGY_COMMAND": command}), \
              patch("agent_shuttle.discovery.shutil.which", return_value=None), \
              patch("agent_shuttle.discovery._is_file", side_effect=lambda path: path == Path(command)), \
              patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):

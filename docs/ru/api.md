@@ -2,6 +2,8 @@
 
 [English version / Английская версия](../api.md)
 
+Изолированные правки задач, `ChangeSet` и инструменты MCP описаны в [отдельном руководстве](../isolated-workspaces.md).
+
 В этом документе приведен полный справочник единого публичного Python API, эндпоинтов HTTP, команд CLI и инструментов Model Context Protocol (MCP), предоставляемых Agent Shuttle.
 
 ---
@@ -20,12 +22,12 @@ from agent_shuttle import (
     SessionInfo,
     AgentInfo,
     ShuttleClient,
-    BridgeResult,
-    BridgeEvent,
-    BridgeSession,
+    ShuttleResult,
+    ShuttleEvent,
+    ShuttleSession,
     TaskHandle,
     HarnessLaunch,
-    BridgeConnection,
+    ShuttleConnection,
     connect_harness,
     AgentProfile,
     ToolPolicy,
@@ -68,7 +70,7 @@ client = ShuttleClient(timeout_seconds: float = 1800)
 
 #### Методы
 
-- **`async def ask(peer_url: str, prompt: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None, session_id: str | None = None, request_id: str | None = None) -> BridgeResult`**
+- **`async def ask(peer_url: str, prompt: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None, session_id: str | None = None, request_id: str | None = None) -> ShuttleResult`**
   Отправляет задачу и ждёт результат. При отмене вызывающего кода или истечении общего тайм-аута запрашивает удалённую отмену.
   - `prompt`: Непустая строка с задачей.
   - `model`: Идентификатор целевой модели агента.
@@ -77,7 +79,7 @@ client = ShuttleClient(timeout_seconds: float = 1800)
   - `tool_policy`: Политика инструментов: `"no_tools"`, `"read_only"`, `"workspace_write"` или `"full_access"`.
   - `session_id`: Идентификатор UUID для продолжения существующей сессии.
   - `request_id`: Необязательный UUID для защиты повторной отправки. При `--task-db` привязка переживает перезапуск сервера. Повтор с другими аргументами отклоняется.
-  - Возвращает: `BridgeResult`.
+  - Возвращает: `ShuttleResult`.
 
 - **`async def submit(..., request_id: str | None = None) -> TaskHandle`**
   Принимает те же настройки, что `ask()`, и возвращается сразу после создания задачи A2A. Прекращение ожидания вызывающим кодом не отменяет отправленную задачу.
@@ -88,8 +90,8 @@ client = ShuttleClient(timeout_seconds: float = 1800)
 - **`task_status(peer_url, task_id)` / `cancel_task(peer_url, task_id)`**
   Получают текущее состояние задачи A2A или запрашивают её отмену.
 
-- **`def session(peer_url: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None) -> BridgeSession`**  
-  Создает объект контекстного менеджера `BridgeSession` с зафиксированными настройками. Рекомендуется использовать с `async with`.
+- **`def session(peer_url: str, model: str | None = None, *, reasoning_effort: str | None = None, read_only: bool = False, tool_policy: str | None = None) -> ShuttleSession`**\
+  Создает объект контекстного менеджера `ShuttleSession` с зафиксированными настройками. Рекомендуется использовать с `async with`.
 
 - **`async def info(peer_url: str) -> dict`**  
   Возвращает полный снимок: каталог моделей, уровни рассуждений и группы квот аккаунта в реальном времени.
@@ -108,7 +110,7 @@ client = ShuttleClient(timeout_seconds: float = 1800)
 
 ---
 
-### `TaskHandle` и `BridgeEvent`
+### `TaskHandle` и `ShuttleEvent`
 
 ```python
 handle = await client.submit(url, "Проверь проект", request_id=my_uuid)
@@ -122,17 +124,17 @@ if snapshot.state == "TASK_STATE_WORKING":
 # cancelled = await handle.cancel()
 ```
 
-`status()` возвращает снимок `BridgeResult`. Если конечный неотрицательный срок `wait(timeout)` истёк, метод возвращает последний снимок; `result()` ждёт терминального состояния или запроса ввода. `result_page(cursor, limit)` читает до 60 000 символов ответа, `transcript(cursor, limit)` — до 100 элементов истории и артефактов с ограничением 60 000 символов на страницу. Для продолжения используйте `next_cursor`. `events()` выдаёт живые события `BridgeEvent(kind, task_id, state, text, data)`; после обрыва потока вызовите `status()`. Повторный `cancel()` уже отменённой задачи возвращает её статус. Обычный A2A-сервер хранит задачи в памяти, если не задан `--task-db`. После перезапуска незавершённые задачи получают состояние failed с ошибкой прерывания и не запускаются повторно. Отмена шага постоянной сессии закрывает её нативную сессию; для продолжения создайте новую.
+`status()` возвращает снимок `ShuttleResult`. Если конечный неотрицательный срок `wait(timeout)` истёк, метод возвращает последний снимок; `result()` ждёт терминального состояния или запроса ввода. `result_page(cursor, limit)` читает до 60 000 символов ответа, `transcript(cursor, limit)` — до 100 элементов истории A2A и артефактов с ограничением 60 000 символов на страницу. Для продолжения используйте `next_cursor`. `events()` выдаёт живые события A2A `ShuttleEvent(kind, task_id, state, text, data)`; после обрыва потока вызовите `status()` для получения текущего состояния. На серверах Shuttle метод `events_page(cursor=0, limit=100)` читает упорядоченный журнал, включая события, пропущенные при обрыве. Пока есть `next_cursor`, читайте следующую страницу; на текущем конце сохраните `total_size` как курсор для последующего запроса. У каждого элемента есть `seq`, `timestamp`, `kind`, `data` и `data_truncated`. Метод `event_page(seq, cursor=0, limit=60000)` читает полный JSON крупного события частями. Эти два метода — расширение Shuttle; на других A2A-серверах подмены журналом истории нет. Повторный `cancel()` уже отменённой задачи возвращает её статус. Обычный A2A-сервер хранит задачи в памяти, если не задан `--task-db`. После перезапуска незавершённые задачи получают состояние failed с ошибкой прерывания и не запускаются повторно. Отмена шага постоянной сессии закрывает её нативную сессию; для продолжения создайте новую.
 
 ---
 
-### `BridgeResult`
+### `ShuttleResult`
 
 Датакласс с результатом выполнения задачи:
 
 ```python
 @dataclass(frozen=True)
-class BridgeResult:
+class ShuttleResult:
     peer: str
     task_id: str | None
     context_id: str | None
@@ -150,7 +152,7 @@ class BridgeResult:
 
 ---
 
-### `BridgeSession`
+### `ShuttleSession`
 
 Управляет состоянием многошаговой беседы с фиксированными параметрами:
 
@@ -168,7 +170,7 @@ async with client.session(url, model="gpt-5.6-terra") as session:
 
 ### `HarnessLaunch` и `connect_harness`
 
-Программное управление жизненным циклом локальных серверов Bridge. Автоматически переиспользует уже запущенный сервер (если совпадают бэкенд, канонический рабочий каталог и разрешения) или поднимает временный изолированный экземпляр.
+Программное управление жизненным циклом локальных серверов Shuttle. Автоматически переиспользует уже запущенный сервер (если совпадают бэкенд, канонический рабочий каталог и разрешения) или поднимает временный изолированный экземпляр.
 
 ```python
 @dataclass(frozen=True)
@@ -234,7 +236,7 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
 
 ### `AntigravityAuthenticationError`
 
-Исключение означает, что Antigravity CLI не может получить доступ к своей учётной записи из процесса Bridge. Если CLI также сообщает об отказе доступа к своей конфигурации, запустите Bridge от имени вошедшего пользователя вне песочницы вызывающего процесса.
+Исключение означает, что Antigravity CLI не может получить доступ к своей учётной записи из процесса Shuttle. Если CLI также сообщает об отказе доступа к своей конфигурации, запустите Shuttle от имени вошедшего пользователя вне песочницы вызывающего процесса.
 
 ---
 
@@ -268,17 +270,17 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
 |---|---|---|
 | `/.well-known/agent-card.json` | `GET` | Визитная карточка агента A2A 1.0 JSON (описание возможностей и навыков). |
 | `/` | `POST` | Точка входа JSON-RPC по протоколу A2A 1.0. |
-| `/bridge/identity` | `GET` | Быстрая проверка идентификатора (бэкенд, канонический workspace, режим разрешений, тайм-аут хода). Быстрая проверка готовности. |
-| `/bridge/info` | `GET` | Объединенный снимок возможностей, каталога моделей и квот аккаунта. |
-| `/bridge/capabilities` | `GET` | Список моделей, текущая модель, уровни рассуждений и предел политик инструментов. |
-| `/bridge/usage` | `GET` | Квоты аккаунта, лимиты окон и время сброса. |
-| `/bridge/sessions/{session_id}` | `DELETE` | Закрывает сессию и освобождает ресурсы бэкенда. |
+| `/shuttle/identity` | `GET` | Быстрая проверка идентификатора (бэкенд, канонический workspace, режим разрешений, тайм-аут хода). Быстрая проверка готовности. |
+| `/shuttle/info` | `GET` | Объединенный снимок возможностей, каталога моделей и квот аккаунта. |
+| `/shuttle/capabilities` | `GET` | Список моделей, текущая модель, уровни рассуждений и предел политик инструментов. |
+| `/shuttle/usage` | `GET` | Квоты аккаунта, лимиты окон и время сброса. |
+| `/shuttle/sessions/{session_id}` | `DELETE` | Закрывает сессию и освобождает ресурсы бэкенда. |
 
 ---
 
 ## Интерфейс командной строки (CLI)
 
-Точка входа — `agent-shuttle` (или `python -m agent_shuttle`). Класс `BridgeClient` остаётся в API пакета `agent_shuttle`. Версия 0.6 удаляет пакет импортов `agent_bridge` и команды `agent-bridge`.
+Точка входа — `agent-shuttle` (или `python -m agent_shuttle`). Python API экспортирует `ShuttleClient`, `ShuttleSession`, `ShuttleResult`, `ShuttleEvent` и `ShuttleConnection`.
 
 ### `agent-shuttle serve`
 
@@ -339,10 +341,10 @@ agent-shuttle-mcp
 
 ### Переменные окружения
 
-- `BRIDGE_WORKSPACE`: Каталог проекта для временных серверов. Если не задан, используется рабочий каталог MCP-процесса; инструментам также можно передать `workspace`.
-- `BRIDGE_CODEX_URL` и `BRIDGE_ANTIGRAVITY_URL`: Необязательные локальные адреса. Если подходящий сервер не запущен, MCP запускает его на время запроса.
-- `BRIDGE_TASK_REGISTRY`: Необязательный путь к реестру задач MCP (по умолчанию `<BRIDGE_WORKSPACE>/.agent-shuttle/mcp-tasks.json`). Базы A2A-серверов находятся в `.agent-shuttle` целевого рабочего каталога.
-- `BRIDGE_AGENTS_JSON`: Необязательные параметры запуска для произвольных идентификаторов агентов. Для встроенного идентификатора по-прежнему допустима строка URL:
+- `AGENT_SHUTTLE_WORKSPACE`: Каталог проекта для временных серверов. Если не задан, используется рабочий каталог MCP-процесса; инструментам также можно передать `workspace`.
+- `AGENT_SHUTTLE_CODEX_URL` и `AGENT_SHUTTLE_ANTIGRAVITY_URL`: Необязательные локальные адреса. Если подходящий сервер не запущен, MCP запускает его на время запроса.
+- `AGENT_SHUTTLE_TASK_REGISTRY`: Необязательный путь к реестру задач MCP (по умолчанию `<AGENT_SHUTTLE_WORKSPACE>/.agent-shuttle/mcp-tasks.json`). Базы A2A-серверов находятся в `.agent-shuttle` целевого рабочего каталога.
+- `AGENT_SHUTTLE_AGENTS_JSON`: Необязательные параметры запуска для произвольных идентификаторов агентов. Для встроенного идентификатора по-прежнему допустима строка URL:
   ```json
   {"opencode-local": {"harness": "opencode", "profile": "C:/profiles/opencode.json", "url": "http://127.0.0.1:8767"}}
   ```
@@ -351,7 +353,7 @@ agent-shuttle-mcp
 ### Доступные инструменты MCP
 
 1. **`ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`**
-   Использует подходящий A2A-сервер или запускает его. Встроенным идентификаторам запись в `BRIDGE_AGENTS_JSON` не нужна.
+   Использует подходящий A2A-сервер или запускает его. Встроенным идентификаторам запись в `AGENT_SHUTTLE_AGENTS_JSON` не нужна.
 
 2. **`get_agent_info(agent_id, workspace?)`**
    Возвращает модели, усилия и квоты, при необходимости запуская временный сервер.
@@ -375,4 +377,7 @@ agent-shuttle-mcp
    Проверяют состояние, ждут с отдельным лимитом времени или явно отменяют задачу. Истечение времени ожидания не останавливает исполнение.
 
 9. **`get_result(task_id, cursor=0, limit=60000)` / `get_transcript(task_id, cursor=0, limit=100)`**
-   Читают ответ и историю страницами; продолжайте по `next_cursor` до `null`. Сохранённые результаты доступны после перезапуска MCP; прерванная работа получает состояние failed.
+   Читают ответ и историю A2A с артефактами страницами; продолжайте по `next_cursor` до `null`. Промежуточные обновления состояния могут отсутствовать в истории A2A.
+
+10. **`get_events(task_id, cursor=0, limit=100)` / `get_event_page(task_id, seq, cursor=0, limit=60000)`**
+    Читают упорядоченный журнал Shuttle или полный JSON обрезанного события. Переходите по `next_cursor`, а на текущем конце сохраните `total_size` для следующего запроса. Журнал управляемой MCP-задачи доступен после перезапуска; прерванная работа получает состояние failed.

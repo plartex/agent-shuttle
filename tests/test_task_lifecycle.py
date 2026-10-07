@@ -12,7 +12,7 @@ import httpx
 import uvicorn
 
 from agent_shuttle.a2a_server import make_app
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from a2a.server.agent_execution.active_task_registry import ActiveTaskRegistry
 
 
@@ -87,7 +87,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         await self.running
 
     async def test_submit_returns_before_completion_and_wait_timeout_does_not_cancel(self):
-        handle = await BridgeClient(timeout_seconds=3).submit(self.url, "slow request")
+        handle = await ShuttleClient(timeout_seconds=3).submit(self.url, "slow request")
         self.assertTrue(handle.task_id)
         await asyncio.wait_for(self.backend.started.wait(), 2)
         waiting = await handle.wait(timeout=1)
@@ -100,14 +100,14 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await handle.result()).task_id, handle.task_id)
 
     async def test_a2a_projects_the_library_owned_task_with_same_id(self):
-        handle = await BridgeClient(timeout_seconds=3).submit(self.url, "shared core")
+        handle = await ShuttleClient(timeout_seconds=3).submit(self.url, "shared core")
         self.backend.release.set()
         self.assertEqual((await handle.result()).state, "TASK_STATE_COMPLETED")
         core_task = await self.app.state.task_manager.get(handle.task_id)
         self.assertEqual((await core_task.result()).text, "done: shared core")
 
     async def test_cancel_stops_running_backend_and_is_observable(self):
-        handle = await BridgeClient(timeout_seconds=3).submit(self.url, "cancel me")
+        handle = await ShuttleClient(timeout_seconds=3).submit(self.url, "cancel me")
         await asyncio.wait_for(self.backend.started.wait(), 2)
         cancelled = await handle.cancel()
         self.assertEqual(cancelled.state, "TASK_STATE_CANCELED")
@@ -116,7 +116,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await handle.cancel()).state, "TASK_STATE_CANCELED")
 
     async def test_cancelled_session_is_closed_and_cannot_be_reused_silently(self):
-        client = BridgeClient(timeout_seconds=3)
+        client = ShuttleClient(timeout_seconds=3)
         session_id = str(uuid.uuid4())
         handle = await client.submit(self.url, "first turn", session_id=session_id)
         await asyncio.wait_for(self.backend.started.wait(), 2)
@@ -129,7 +129,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.backend.sessions[0].close_calls, 1)
 
     async def test_cancelling_blocking_ask_cancels_remote_task(self):
-        call = asyncio.create_task(BridgeClient(timeout_seconds=3).ask(self.url, "blocking"))
+        call = asyncio.create_task(ShuttleClient(timeout_seconds=3).ask(self.url, "blocking"))
         await asyncio.wait_for(self.backend.started.wait(), 2)
         call.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -137,10 +137,10 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.backend.cancelled.wait(), 2)
 
     async def test_task_can_be_reopened_from_id_and_streams_status_updates(self):
-        first_client = BridgeClient(timeout_seconds=3)
+        first_client = ShuttleClient(timeout_seconds=3)
         handle = await first_client.submit(self.url, "reconnect")
         await asyncio.wait_for(self.backend.started.wait(), 2)
-        reopened = BridgeClient(timeout_seconds=3).task(self.url, handle.task_id)
+        reopened = ShuttleClient(timeout_seconds=3).task(self.url, handle.task_id)
         self.assertEqual((await reopened.status()).state, "TASK_STATE_WORKING")
 
         seen = asyncio.Queue()
@@ -160,8 +160,63 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1].state, "TASK_STATE_COMPLETED")
         self.assertEqual((await reopened.result()).text, "done: reconnect")
 
+    async def test_remote_event_pages_resume_without_gaps_or_duplicates(self):
+        client = ShuttleClient(timeout_seconds=3)
+        handle = await client.submit(self.url, "journal")
+        await asyncio.wait_for(self.backend.started.wait(), 2)
+        first = await handle.events_page()
+        cursor = first["total_size"]
+        self.assertEqual([item["seq"] for item in first["items"]], list(range(cursor)))
+
+        journal = self.app.state.task_manager.event_stream
+        await journal.publish_backend_event(handle.task_id, {"kind": "step", "text": "one"})
+        await journal.publish_backend_event(handle.task_id, {"kind": "step", "text": "two"})
+        reopened = ShuttleClient(timeout_seconds=3).task(self.url, handle.task_id)
+        missed = await reopened.events_page(cursor, limit=1)
+        self.assertEqual([item["data"]["text"] for item in missed["items"]], ["one"])
+        next_page = await reopened.events_page(missed["next_cursor"], limit=1)
+        self.assertEqual([item["data"]["text"] for item in next_page["items"]], ["two"])
+        self.assertEqual([item["seq"] for item in missed["items"] + next_page["items"]],
+                         [cursor, cursor + 1])
+        tail = next_page["total_size"]
+        self.assertEqual((await reopened.events_page(tail))["items"], [])
+
+        self.backend.release.set()
+        await handle.result()
+        completed = await reopened.events_page(tail)
+        self.assertEqual([item["kind"] for item in completed["items"]], ["completed"])
+        self.assertEqual((await reopened.events_page(completed["total_size"]))["items"], [])
+
+    async def test_remote_large_event_and_http_error_contract(self):
+        client = ShuttleClient(timeout_seconds=3)
+        handle = await client.submit(self.url, "large event")
+        await asyncio.wait_for(self.backend.started.wait(), 2)
+        await self.app.state.task_manager.event_stream.publish_backend_event(
+            handle.task_id, {"kind": "large", "text": "x" * 70000})
+        page = await handle.events_page()
+        large = next(item for item in page["items"] if item["kind"] == "large")
+        self.assertTrue(large["data_truncated"])
+        chunks, offset = [], 0
+        while offset is not None:
+            part = await handle.event_page(large["seq"], cursor=offset)
+            chunks.append(part["text"])
+            offset = part["next_cursor"]
+        self.assertIn("x" * 70000, "".join(chunks))
+
+        async with httpx.AsyncClient() as unauthenticated:
+            response = await unauthenticated.get(self.url + f"/shuttle/tasks/{handle.task_id}/events")
+            self.assertEqual(response.status_code, 401)
+        async with await client._http(self.url) as http:
+            base = self.url + f"/shuttle/tasks/{handle.task_id}/events"
+            self.assertEqual((await http.get(base, params={"cursor": -1})).status_code, 400)
+            self.assertEqual((await http.get(base, params={"limit": 101})).status_code, 400)
+            self.assertEqual((await http.get(base + "/bad-seq")).status_code, 400)
+            self.assertEqual((await http.get(base + "/999999")).status_code, 404)
+            unknown = self.url + f"/shuttle/tasks/{uuid.uuid4()}/events"
+            self.assertEqual((await http.get(unknown)).status_code, 404)
+
     async def test_retried_submit_with_same_request_id_does_not_run_twice(self):
-        client = BridgeClient(timeout_seconds=3)
+        client = ShuttleClient(timeout_seconds=3)
         request_id = str(uuid.uuid4())
         first = await client.submit(self.url, "once", request_id=request_id)
         second = await client.submit(self.url, "once", request_id=request_id)
@@ -173,7 +228,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await second.result()).state, "TASK_STATE_COMPLETED")
 
     async def test_wait_budget_is_respected_even_when_status_transport_hangs(self):
-        client = BridgeClient(timeout_seconds=3)
+        client = ShuttleClient(timeout_seconds=3)
 
         async def hung_status(*args):
             await asyncio.Event().wait()
@@ -185,7 +240,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_worker_execution_timeout_fails_task_and_stops_backend(self):
         await self._reconfigure(execution_timeout_seconds=0.1)
-        handle = await BridgeClient(timeout_seconds=3).submit(self.url, "stalled")
+        handle = await ShuttleClient(timeout_seconds=3).submit(self.url, "stalled")
         result = await handle.wait(2)
         self.assertEqual(result.state, "TASK_STATE_FAILED")
         self.assertEqual(result.error["code"], "worker_timeout")
@@ -205,7 +260,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
 
     async def test_server_drains_a2a_producers_before_closing_library_repository(self):
-        await BridgeClient(timeout_seconds=3).submit(self.url, "unfinished")
+        await ShuttleClient(timeout_seconds=3).submit(self.url, "unfinished")
         await asyncio.wait_for(self.backend.started.wait(), 2)
         manager = self.app.state.task_manager
         observed = []
@@ -223,7 +278,7 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_silent_worker_has_distinct_stalled_error_and_is_cancelled(self):
         await self._reconfigure(execution_timeout_seconds=2, stall_timeout_seconds=0.1)
-        handle = await BridgeClient(timeout_seconds=3).submit(self.url, "stalled")
+        handle = await ShuttleClient(timeout_seconds=3).submit(self.url, "stalled")
         result = await handle.wait(2)
         self.assertEqual(result.state, "TASK_STATE_FAILED")
         self.assertEqual(result.error["code"], "worker_stalled")
@@ -237,23 +292,23 @@ class TaskLifecycleTest(unittest.IsolatedAsyncioTestCase):
             return "done"
         self.backend.run = active
         await self._reconfigure(execution_timeout_seconds=5, stall_timeout_seconds=0.5)
-        handle = await BridgeClient(timeout_seconds=3).submit(self.url, "active")
+        handle = await ShuttleClient(timeout_seconds=3).submit(self.url, "active")
         result = await handle.wait(4)
         self.assertEqual(result.state, "TASK_STATE_COMPLETED", result.error)
         transcript = await handle.transcript()
-        self.assertIn("agent_bridge.event", str(transcript))
+        self.assertIn("agent_shuttle.event", str(transcript))
 
     async def test_backend_failure_preserves_structured_error(self):
         async def fail(*args, **kwargs):
             raise ValueError("broken configuration")
         self.backend.run = fail
-        result = await BridgeClient(timeout_seconds=3).ask(self.url, "failure")
+        result = await ShuttleClient(timeout_seconds=3).ask(self.url, "failure")
         self.assertEqual(result.state, "TASK_STATE_FAILED")
         self.assertEqual(result.error["type"], "ValueError")
         self.assertFalse(result.error["retryable"])
 
-    async def test_cancelled_bridge_session_refuses_followup_locally(self):
-        client = BridgeClient(timeout_seconds=3)
+    async def test_cancelled_shuttle_session_refuses_followup_locally(self):
+        client = ShuttleClient(timeout_seconds=3)
         async with client.session(self.url) as session:
             call = asyncio.create_task(session.ask("first turn"))
             await asyncio.wait_for(self.backend.started.wait(), 2)

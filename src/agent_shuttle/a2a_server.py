@@ -39,6 +39,7 @@ from .structured import encode_output_schema
 from .task_library import TaskManager
 from .runtime_context import NESTED_DISPATCH_ERROR, is_worker_context
 from .local_auth import LocalCredential
+from .metadata_migration import OLD_PREFIX
 
 
 class _LoopbackAuth:
@@ -61,7 +62,7 @@ class _LoopbackAuth:
             status = 421
         elif any(origins):
             status = 403
-        elif scope.get("path") not in {"/.well-known/agent-card.json", "/bridge/proof"}:
+        elif scope.get("path") not in {"/.well-known/agent-card.json", "/shuttle/proof"}:
             prefix = b"Bearer "
             if (len(auth) != 1 or not auth[0].startswith(prefix)
                     or not hmac.compare_digest(auth[0][len(prefix):], self.credential.token.encode())):
@@ -170,7 +171,7 @@ class SessionManager:
             await self.close(session_id)
 
 
-class BridgeExecutor(AgentExecutor):
+class ShuttleExecutor(AgentExecutor):
     def __init__(self, task_manager: TaskManager, agent_id: str):
         self.task_manager = task_manager
         self.agent_id = agent_id
@@ -186,6 +187,12 @@ class BridgeExecutor(AgentExecutor):
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue, task.id, task.context_id)
+        if any(key.startswith(OLD_PREFIX) for key in context.message.metadata):
+            await updater.update_status(
+                TaskState.TASK_STATE_REJECTED,
+                new_text_message("Legacy A2A metadata keys are unsupported; use agent_shuttle.*"),
+            )
+            return
         if not prompt:
             await updater.update_status(
                 TaskState.TASK_STATE_REJECTED,
@@ -193,41 +200,41 @@ class BridgeExecutor(AgentExecutor):
             )
             return
         model = None
-        if "agent_bridge.model" in context.message.metadata:
-            model = context.message.metadata["agent_bridge.model"]
+        if "agent_shuttle.model" in context.message.metadata:
+            model = context.message.metadata["agent_shuttle.model"]
             if not isinstance(model, str) or not model.strip():
                 await updater.update_status(
                     TaskState.TASK_STATE_REJECTED,
-                    new_text_message("agent_bridge.model must be a nonempty string"),
+                    new_text_message("agent_shuttle.model must be a nonempty string"),
                 )
                 return
             model = model.strip()
         reasoning_effort = None
-        if "agent_bridge.reasoning_effort" in context.message.metadata:
-            reasoning_effort = context.message.metadata["agent_bridge.reasoning_effort"]
+        if "agent_shuttle.reasoning_effort" in context.message.metadata:
+            reasoning_effort = context.message.metadata["agent_shuttle.reasoning_effort"]
             if not isinstance(reasoning_effort, str) or not reasoning_effort.strip():
                 await updater.update_status(
                     TaskState.TASK_STATE_REJECTED,
-                    new_text_message("agent_bridge.reasoning_effort must be a nonempty string"),
+                    new_text_message("agent_shuttle.reasoning_effort must be a nonempty string"),
                 )
                 return
             reasoning_effort = reasoning_effort.strip()
         read_only = False
-        if "agent_bridge.read_only" in context.message.metadata:
-            read_only = context.message.metadata["agent_bridge.read_only"]
+        if "agent_shuttle.read_only" in context.message.metadata:
+            read_only = context.message.metadata["agent_shuttle.read_only"]
         if not isinstance(read_only, bool):
             await updater.update_status(
                 TaskState.TASK_STATE_REJECTED,
-                new_text_message("agent_bridge.read_only must be a boolean"),
+                new_text_message("agent_shuttle.read_only must be a boolean"),
             )
             return
         tool_policy = None
-        if "agent_bridge.tool_policy" in context.message.metadata:
-            tool_policy = context.message.metadata["agent_bridge.tool_policy"]
+        if "agent_shuttle.tool_policy" in context.message.metadata:
+            tool_policy = context.message.metadata["agent_shuttle.tool_policy"]
             if not isinstance(tool_policy, str) or tool_policy not in {p.value for p in ToolPolicy}:
                 await updater.update_status(
                     TaskState.TASK_STATE_REJECTED,
-                    new_text_message("agent_bridge.tool_policy is invalid"),
+                    new_text_message("agent_shuttle.tool_policy is invalid"),
                 )
                 return
             if read_only and tool_policy != ToolPolicy.READ_ONLY.value:
@@ -237,8 +244,8 @@ class BridgeExecutor(AgentExecutor):
                 )
                 return
         session_id = (
-            context.message.metadata["agent_bridge.session_id"]
-            if "agent_bridge.session_id" in context.message.metadata else None
+            context.message.metadata["agent_shuttle.session_id"]
+            if "agent_shuttle.session_id" in context.message.metadata else None
         )
         if session_id is not None:
             try:
@@ -246,7 +253,7 @@ class BridgeExecutor(AgentExecutor):
             except (TypeError, ValueError, AttributeError):
                 await updater.update_status(
                     TaskState.TASK_STATE_REJECTED,
-                    new_text_message("agent_bridge.session_id must be a UUID"),
+                    new_text_message("agent_shuttle.session_id must be a UUID"),
                 )
                 return
             if context.message.context_id != session_id:
@@ -266,19 +273,27 @@ class BridgeExecutor(AgentExecutor):
             except (TypeError, ValueError) as exc:
                 await updater.update_status(TaskState.TASK_STATE_REJECTED, new_text_message(str(exc)))
                 return
+        workspace_mode = (context.message.metadata["agent_shuttle.workspace_mode"]
+                          if "agent_shuttle.workspace_mode" in context.message.metadata else "shared")
+        if workspace_mode not in {"shared", "isolated"}:
+            await updater.update_status(TaskState.TASK_STATE_REJECTED,
+                                        new_text_message("Invalid workspace_mode"))
+            return
         await self._execute_library(task, updater, prompt, model, reasoning_effort,
                                     tool_policy or ("read_only" if read_only else None), session_id,
-                                    (context.message.metadata["agent_bridge.request_id"]
-                                     if "agent_bridge.request_id" in context.message.metadata else None), output_schema)
+                                    (context.message.metadata["agent_shuttle.request_id"]
+                                     if "agent_shuttle.request_id" in context.message.metadata else None),
+                                    output_schema, workspace_mode)
 
     async def _execute_library(self, task, updater, prompt, model, reasoning_effort,
-                               tool_policy, session_id, request_id, output_schema=None):
+                               tool_policy, session_id, request_id, output_schema=None,
+                               workspace_mode="shared"):
         manager = self.task_manager
         assert manager is not None and self.agent_id is not None
 
         async def on_event(event):
             message = new_text_message(str(event.get("text", "")) or str(event.get("kind", "activity")))
-            message.metadata["agent_bridge.event"] = event
+            message.metadata["agent_shuttle.event"] = event
             await updater.update_status(TaskState.TASK_STATE_WORKING, message)
 
         try:
@@ -290,6 +305,7 @@ class BridgeExecutor(AgentExecutor):
                                                reasoning_effort=reasoning_effort,
                                                tool_policy=tool_policy, session_id=session_id,
                                                output_schema=output_schema,
+                                               workspace_mode=workspace_mode,
                                                request_id=request_id, task_id=task.id,
                                                event_sink=on_event)
         except Exception as exc:
@@ -297,7 +313,7 @@ class BridgeExecutor(AgentExecutor):
                      "message": str(exc), "retryable": False}
             await updater.update_status(TaskState.TASK_STATE_FAILED,
                                         new_text_message(f"{type(exc).__name__}: {exc}"),
-                                        metadata={"agent_bridge.error": error})
+                                        metadata={"agent_shuttle.error": error})
             return
         await updater.update_status(TaskState.TASK_STATE_WORKING)
         try:
@@ -307,9 +323,12 @@ class BridgeExecutor(AgentExecutor):
             raise
         metadata = {}
         if result.usage:
-            metadata["agent_bridge.usage"] = result.usage
+            metadata["agent_shuttle.usage"] = result.usage
         if result.details:
-            metadata["agent_bridge.details"] = result.details
+            metadata["agent_shuttle.details"] = result.details
+        changes = await core_task.changes()
+        if changes is not None:
+            metadata["agent_shuttle.change"] = await changes.info()
         if result.state == "completed":
             await updater.add_artifact([new_text_part(result.text, media_type="text/plain")],
                                        name="result", metadata=metadata or None)
@@ -318,9 +337,10 @@ class BridgeExecutor(AgentExecutor):
             error = result.error or {"code": "backend_error", "message": "Unknown worker error"}
             await updater.update_status(TaskState.TASK_STATE_FAILED,
                                         new_text_message(f"{error.get('type', 'Error')}: {error['message']}"),
-                                        metadata={**metadata, "agent_bridge.error": error})
+                                        metadata={**metadata, "agent_shuttle.error": error})
         elif result.state == "canceled":
-            await updater.update_status(TaskState.TASK_STATE_CANCELED)
+            await updater.update_status(TaskState.TASK_STATE_CANCELED,
+                                        metadata=metadata or None)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         # The A2A active-task manager cancels and joins the producer after this
@@ -343,17 +363,17 @@ class _IdempotentRequestHandler(DefaultRequestHandler):
         if self._worker_context:
             raise InvalidParamsError(NESTED_DISPATCH_ERROR)
         request_id = (
-            params.message.metadata["agent_bridge.request_id"]
-            if "agent_bridge.request_id" in params.message.metadata else None
+            params.message.metadata["agent_shuttle.request_id"]
+            if "agent_shuttle.request_id" in params.message.metadata else None
         )
         if request_id is None:
             return await super().on_message_send(params, context)
         try:
             request_id = str(uuid.UUID(request_id))
         except (TypeError, ValueError, AttributeError):
-            raise InvalidParamsError("agent_bridge.request_id must be a UUID") from None
+            raise InvalidParamsError("agent_shuttle.request_id must be a UUID") from None
         if params.message.message_id != request_id:
-            raise InvalidParamsError("message_id must match agent_bridge.request_id")
+            raise InvalidParamsError("message_id must match agent_shuttle.request_id")
         fingerprint = params.SerializeToString(deterministic=True)
         key = (context.user.user_name, request_id)
         async with self._request_lock:
@@ -389,7 +409,8 @@ class _IdempotentRequestHandler(DefaultRequestHandler):
 def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider | None = None,
              *, task_store=None, execution_timeout_seconds: float = 1800,
              stall_timeout_seconds: float = 1800,
-             credential: LocalCredential | None = None, publish_credential: bool = False) -> Starlette:
+             credential: LocalCredential | None = None, publish_credential: bool = False,
+             backend_factory=None) -> Starlette:
     for budget in (execution_timeout_seconds, stall_timeout_seconds):
         if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget <= 0:
             raise ValueError("worker budgets must be positive finite numbers")
@@ -399,7 +420,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         name=f"Run {name} task",
         description=(
             f"Delegate a coding task to the local {name} agent and return its result. "
-            "Optional message metadata agent_bridge.model and agent_bridge.reasoning_effort "
+            "Optional message metadata agent_shuttle.model and agent_shuttle.reasoning_effort "
             "select the backend model and reasoning effort."
         ),
         input_modes=["text/plain"],
@@ -410,7 +431,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         name=f"{name.title()} local agent",
         description=(
             f"Local {name} agent exposed through A2A by Agent Shuttle. "
-            "Live models, reasoning efforts and account quotas are available at /bridge/info."
+            "Live models, reasoning efforts and account quotas are available at /shuttle/info."
         ),
         version="0.1.0",
         default_input_modes=["text/plain"],
@@ -430,9 +451,10 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         backend_workspace = Path.cwd()
     manager = TaskManager({name: backend}, workspace=backend_workspace,
                           database=library_database, memory=library_database is None,
+                          backend_factories={name: backend_factory} if backend_factory else None,
                           execution_timeout_seconds=execution_timeout_seconds,
                           stall_timeout_seconds=stall_timeout_seconds)
-    executor = BridgeExecutor(manager, name)
+    executor = ShuttleExecutor(manager, name)
     handler = _IdempotentRequestHandler(
         agent_executor=executor,
         task_store=task_store or InMemoryTaskStore(),
@@ -487,6 +509,9 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                 ToolPolicy.READ_ONLY, ToolPolicy.WORKSPACE_WRITE, ToolPolicy.FULL_ACCESS,
             }
         )
+        result["workspace_modes"] = (["shared", "isolated"]
+                                     if backend_factory and manager._enforces_workspace(name)
+                                     else ["shared"])
         if isinstance(backend, AntigravityCliBackend):
             result["supported_tool_policies"] = ["no_tools", "read_only", "workspace_write"]
             result["tool_policy_enforcement"] = "agy_pre_tool_use"
@@ -506,22 +531,22 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             result["agy_turn_timeout_seconds"] = backend.turn_timeout_seconds
         return result
 
-    async def bridge_identity(request):
+    async def shuttle_identity(request):
         return JSONResponse(identity_data())
 
-    async def bridge_proof(request):
+    async def shuttle_proof(request):
         nonce = request.query_params.get("nonce", "")
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}", nonce):
             return JSONResponse({"error": "nonce must be a 32-byte base64url value"}, status_code=400)
         return JSONResponse({"instance_id": credential.instance_id,
                              "origin": credential.origin, "signature": credential.signature(nonce)})
 
-    async def bridge_info(request):
+    async def shuttle_info(request):
         if info_provider is None:
             return JSONResponse({"error": "Info provider is not configured"}, status_code=503)
         path = request.url.path
-        capabilities = path != "/bridge/usage"
-        usage = path != "/bridge/capabilities"
+        capabilities = path != "/shuttle/usage"
+        usage = path != "/shuttle/capabilities"
         try:
             result = await info_provider.fetch(capabilities=capabilities, usage=usage)
         except Exception as exc:
@@ -543,6 +568,63 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         except KeyError:
             closed = False
         return JSONResponse({"closed": closed})
+
+    async def change_info(request):
+        try:
+            return JSONResponse(await manager.change_info(request.path_params["task_id"]))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def change_diff(request):
+        try:
+            cursor = int(request.query_params.get("cursor", "0"))
+            limit = int(request.query_params.get("limit", "60000"))
+            return JSONResponse(await manager.change_diff(request.path_params["task_id"], cursor, limit))
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def task_events_page(request):
+        try:
+            cursor = int(request.query_params.get("cursor", "0"))
+            limit = int(request.query_params.get("limit", "100"))
+            return JSONResponse(await manager.transcript(request.path_params["task_id"], cursor, limit))
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def task_event_page(request):
+        try:
+            seq = int(request.path_params["seq"])
+            cursor = int(request.query_params.get("cursor", "0"))
+            limit = int(request.query_params.get("limit", "60000"))
+            return JSONResponse(await manager.event_page(request.path_params["task_id"],
+                                                         seq, cursor, limit))
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    async def apply_change(request):
+        try:
+            body = await request.json()
+            return JSONResponse(await manager.apply_change(
+                request.path_params["task_id"], body["expected_revision"],
+                allow_partial=body.get("allow_partial", False)))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+
+    async def discard_change(request):
+        try:
+            return JSONResponse(await manager.discard_change(request.path_params["task_id"]))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -590,12 +672,18 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
     app = Starlette(
         lifespan=lifespan,
         routes=[
-            Route("/bridge/proof", bridge_proof),
-            Route("/bridge/identity", bridge_identity),
-            Route("/bridge/info", bridge_info),
-            Route("/bridge/capabilities", bridge_info),
-            Route("/bridge/usage", bridge_info),
-            Route("/bridge/sessions/{session_id}", close_session, methods=["DELETE"]),
+            Route("/shuttle/proof", shuttle_proof),
+            Route("/shuttle/identity", shuttle_identity),
+            Route("/shuttle/info", shuttle_info),
+            Route("/shuttle/capabilities", shuttle_info),
+            Route("/shuttle/usage", shuttle_info),
+            Route("/shuttle/sessions/{session_id}", close_session, methods=["DELETE"]),
+            Route("/shuttle/tasks/{task_id}/changes", change_info),
+            Route("/shuttle/tasks/{task_id}/diff", change_diff),
+            Route("/shuttle/tasks/{task_id}/events", task_events_page),
+            Route("/shuttle/tasks/{task_id}/events/{seq}", task_event_page),
+            Route("/shuttle/tasks/{task_id}/apply", apply_change, methods=["POST"]),
+            Route("/shuttle/tasks/{task_id}/changes", discard_change, methods=["DELETE"]),
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(handler, "/"),
         ]

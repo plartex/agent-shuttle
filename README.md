@@ -12,6 +12,8 @@ Agent Shuttle gives Python applications one way to work with **Codex**, **Antigr
 
 It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and report each runtime's tool permission guarantees—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
 
+File editing tasks can use [isolated Git worktrees with explicit change application](docs/isolated-workspaces.md).
+
 ---
 
 ## Supported Agent Harnesses
@@ -64,7 +66,7 @@ pip install C:\path\to\agent-shuttle
 # pip install -e C:\path\to\agent-shuttle
 ```
 
-Once installed, the CLI tools (`agent-shuttle`, `agent-shuttle-mcp`) and Python API (`agent_shuttle`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports. Version 0.6 removes the old `agent_bridge` Python imports and `agent-bridge` commands; the `agent_bridge.*` A2A metadata keys remain part of the wire protocol.
+Once installed, the CLI tools (`agent-shuttle`, `agent-shuttle-mcp`) and Python API (`agent_shuttle`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports. Version 0.7 uses Shuttle names throughout the Python API, environment, HTTP routes, and A2A metadata. See [the 0.7 upgrade guide](docs/upgrade-0.7.md) before restarting existing servers.
 
 The distribution has one Python package: `src/agent_shuttle/`. This is the standard `src` layout; there is no second implementation or compatibility package.
 
@@ -162,7 +164,7 @@ agent-shuttle info http://127.0.0.1:8765
 agent-shuttle ask http://127.0.0.1:8765 "Summarize recent changes" --model gpt-5.6-terra
 ```
 
-`doctor` reports installation, connection and turn verification separately. Its default run checks built-ins and local profiles registered in `BRIDGE_AGENTS_JSON`; missing optional runtimes are skipped. OpenCode and Claude Code need a JSON profile for connection checks. `--json` provides the same report for scripts. Exit codes are `0` for passed checks, `1` for a failed target or smoke turn, and `2` for invalid invocation or configuration. `--smoke` requires one target and uses enforced `no_tools` (or Codex `read_only`); ACP smoke is rejected because ACP cannot enforce those restrictions.
+`doctor` reports installation, connection and turn verification separately. Its default run checks built-ins and local profiles registered in `AGENT_SHUTTLE_AGENTS_JSON`; missing optional runtimes are skipped. OpenCode and Claude Code need a JSON profile for connection checks. `--json` provides the same report for scripts. Exit codes are `0` for passed checks, `1` for a failed target or smoke turn, and `2` for invalid invocation or configuration. `--smoke` requires one target and uses enforced `no_tools` (or Codex `read_only`); ACP smoke is rejected because ACP cannot enforce those restrictions.
 
 ### Register an ACP agent
 
@@ -175,7 +177,7 @@ agent-shuttle info http://127.0.0.1:8768
 agent-shuttle ask http://127.0.0.1:8768 "Explain this project" --tool-policy read_only
 ```
 
-For MCP managed startup, map an arbitrary ID to the profile in `BRIDGE_AGENTS_JSON`:
+For MCP managed startup, map an arbitrary ID to the profile in `AGENT_SHUTTLE_AGENTS_JSON`:
 
 ```json
 {"my-acp": {"harness": "acp", "profile": "C:/profiles/my-acp.json"}}
@@ -192,7 +194,7 @@ agent-shuttle-mcp
 ```
 
 Available MCP tools:
-- `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`: Reuses a matching local A2A server or starts a temporary one. Built-in IDs are `codex`, `antigravity`, `opencode`, and `claude_code`; configured ACP IDs require a JSON profile in `BRIDGE_AGENTS_JSON`.
+- `ask_agent(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?)`: Reuses a matching local A2A server or starts a temporary one. Built-in IDs are `codex`, `antigravity`, `opencode`, and `claude_code`; configured ACP IDs require a JSON profile in `AGENT_SHUTTLE_AGENTS_JSON`.
 - `get_agent_info(agent_id, workspace?)`: Fetches live models and quotas, starting a temporary server if needed.
 - `ask_antigravity(prompt, model?, reasoning_effort?, workspace?, tool_policy?, turn_timeout_seconds=300)`: Starts an Antigravity server if one is not running.
 - `ask_codex(prompt, model?, reasoning_effort?, workspace?)`: Starts a Codex server if one is not running.
@@ -200,16 +202,17 @@ Available MCP tools:
 - `submit_task(agent_id, prompt, model?, reasoning_effort?, tool_policy?, workspace?, request_id?)`: Start a long task and return its ID immediately.
 - `check_task(task_id)`, `wait_task(task_id, timeout_seconds?)`, `cancel_task(task_id)`: Inspect, wait for, or stop a task.
 - `get_result(task_id, cursor?, limit?)`, `get_transcript(task_id, cursor?, limit?)`: Read bounded pages of output and history.
+- `get_events(task_id, cursor?, limit?)`, `get_event_page(task_id, seq, cursor?, limit?)`: Read Shuttle's ordered event journal and full data for a truncated event. Save `total_size` to poll after the current end.
 
 ---
 
 ## Key Concepts
 
 ### Harness Discovery
-Run `agent-shuttle discover` (or `discover_harnesses()` in Python) to inspect local executables without launching processes or loading weights. It checks `PATH` and platform-specific standard installation directories (`%LOCALAPPDATA%\agy\bin`, npm global directories, etc.). Custom paths can be specified via environment variables (`BRIDGE_AGY_COMMAND`) or CLI flags (`--agy-command`, `--opencode-command`, `--claude-command`).
+Run `agent-shuttle discover` (or `discover_harnesses()` in Python) to inspect local executables without launching processes or loading weights. It checks `PATH` and platform-specific standard installation directories (`%LOCALAPPDATA%\agy\bin`, npm global directories, etc.). Custom paths can be specified via environment variables (`AGENT_SHUTTLE_AGY_COMMAND`) or CLI flags (`--agy-command`, `--opencode-command`, `--claude-command`).
 
 ### Model & Reasoning Selection
-Model parameters are passed as A2A metadata keys (`agent_bridge.model`, `agent_bridge.reasoning_effort`):
+Model parameters are passed as A2A metadata keys (`agent_shuttle.model`, `agent_shuttle.reasoning_effort`):
 - **Antigravity:** Reasoning effort is embedded in model IDs (e.g. `gemini-3.8-flash-medium`). If both `--model` and `--effort` are passed, they must match.
 - **Codex:** Model and reasoning effort are configured independently according to the catalog returned by `get_codex_info`.
 - **OpenCode & Claude Code:** Profiles define `allowed_models` and optional `reasoning_efforts` (such as model variants for Ollama or CLI flags).
@@ -217,9 +220,9 @@ Model parameters are passed as A2A metadata keys (`agent_bridge.model`, `agent_b
 ### Workspaces & Session Isolation
 - Every server binds to a strictly validated, canonical workspace directory.
 - `connect_harness()` verifies that an existing server's workspace matches the caller's target workspace before reusing it.
-- **Sessions:** `BridgeSession` maintains a stateful conversation across multiple `ask()` calls. Conversation settings (model, effort, tool policy) are pinned at session creation and cannot be changed mid-session. Idle sessions are cleaned up automatically after 30 minutes.
+- **Sessions:** `ShuttleSession` maintains a stateful conversation across multiple `ask()` calls. Conversation settings (model, effort, tool policy) are pinned at session creation and cannot be changed mid-session. Idle sessions are cleaned up automatically after 30 minutes.
 - **Library task lifecycle:** `TaskManager` runs agents directly from Python, with no A2A or MCP server. It owns task IDs, sessions, a SQLite event journal, cancellation, result paging, preferences, and interruption recovery. A2A projects the same task ID and result through its protocol; MCP continues to reach those tasks through managed A2A peers. See the [Python API](docs/api.md#taskmanager-library-api).
-- **Remote task lifecycle:** `ShuttleClient.submit()` returns a remote `TaskHandle` immediately. Use `status()`, bounded `wait(timeout)`, `events()`, `result_page()`, `transcript()`, `result()`, or `cancel()`; reopen a task by ID with `client.task(url, task_id)`. A wait timeout does not stop the agent. An optional UUID `request_id` deduplicates retried submissions. Standalone servers can persist tasks with `--task-db`; MCP task tools do this automatically in the workspace's `.agent-shuttle` directory. Completed results survive restart; interrupted work is marked failed without replay. See the [API reference](docs/api.md#taskhandle-and-bridgeevent).
+- **Remote task lifecycle:** `ShuttleClient.submit()` returns a remote `TaskHandle` immediately. Use `status()`, bounded `wait(timeout)`, live `events()`, Shuttle-only `events_page()` and `event_page()`, `result_page()`, `transcript()`, `result()`, or `cancel()`; reopen a task by ID with `client.task(url, task_id)`. A wait timeout does not stop the agent. An optional UUID `request_id` deduplicates retried submissions. Standalone servers can persist tasks with `--task-db`; MCP task tools do this automatically in the workspace's `.agent-shuttle` directory. Completed results survive restart; interrupted work is marked failed without replay. See the [API reference](docs/api.md#taskhandle-and-shuttleevent).
 
 ### Safety & Tool Policies
 Agent Shuttle defines four standardized tool policies:
@@ -245,7 +248,7 @@ GitHub Actions runs this same suite on Windows, Ubuntu Linux, and Apple Silicon 
 python -m unittest discover -s tests -v
 ```
 
-Live integration tests against real models are separate, opt-in checks and are not part of the six CI jobs. They can be executed by specifying target environments (e.g. `BRIDGE_LIVE_OLLAMA_MODEL=qwen3.5:9b` or `BRIDGE_LIVE_AGY_FULL_ACCESS=1`). See [CONTRIBUTING.md](CONTRIBUTING.md) for full instructions.
+Live integration tests against real models are separate, opt-in checks and are not part of the six CI jobs. They can be executed by specifying target environments (e.g. `AGENT_SHUTTLE_LIVE_OLLAMA_MODEL=qwen3.5:9b` or `AGENT_SHUTTLE_LIVE_AGY_FULL_ACCESS=1`). See [CONTRIBUTING.md](CONTRIBUTING.md) for full instructions.
 
 ---
 
