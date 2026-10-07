@@ -34,7 +34,7 @@ Codex is managed through the official `openai-codex` Python SDK, which utilizes 
 
 ### 2. Antigravity CLI
 
-Before delegation, the coordinator chooses the workspace and least sufficient enforceable policy for the task. `get_agent_info` and `/bridge/identity` report `supported_tool_policies` and `default_tool_policy`; `tool_policy_notes` explains additional limitations. The list describes the current server and respects profile limits. Omitting a policy uses the harness default and does not imply read-only access. Never replace an unsupported restrictive policy with `full_access` automatically.
+Before delegation, the coordinator chooses the workspace and least sufficient enforceable policy for the task. `get_agent_info` and `/shuttle/identity` report `supported_tool_policies` and `default_tool_policy`; `tool_policy_notes` explains additional limitations. The list describes the current server and respects profile limits. Omitting a policy uses the harness default and does not imply read-only access. Never replace an unsupported restrictive policy with `full_access` automatically.
 
 MCP calls to Codex and Antigravity default to `read_only`. The caller selects `workspace_write` when the user requests file edits; this guidance is delivered in MCP server instructions and tool descriptions, independently of a local `AGENTS.md` or caller account. Configured profiles retain their own default. An incompatible running peer is left intact while MCP starts a fresh peer for the requested workspace and policy.
 
@@ -79,7 +79,7 @@ Claude Code is managed in print mode (`claude -p`) with isolated temporary confi
 
 ACP defines sessions, prompts, updates, cancellation, and client permission requests. It does **not** define an enforceable filesystem or tool sandbox. Agent Shuttle responds to ACP permission requests according to the selected policy: it denies requests for `no_tools` and `read_only`, and for `workspace_write` it accepts only requests whose reported locations are inside the workspace. An ACP agent may perform operations without sending permission requests, so these checks cannot enforce the requested boundary.
 
-For ACP, `supported_tool_policies` is empty and `advisory_tool_policies` lists the policies accepted by the profile. `/bridge/identity` and `get_agent_info` report `tool_policy_enforcement: "advisory"`; task results contain a warning. `read_only_tools` is always false. `max_tool_policy` limits what callers can request but does not create a sandbox. Use external, verified isolation when the task requires an enforceable restriction.
+For ACP, `supported_tool_policies` is empty and `advisory_tool_policies` lists the policies accepted by the profile. `/shuttle/identity` and `get_agent_info` report `tool_policy_enforcement: "advisory"`; task results contain a warning. `read_only_tools` is always false. `max_tool_policy` limits what callers can request but does not create a sandbox. Use external, verified isolation when the task requires an enforceable restriction.
 
 ---
 
@@ -141,7 +141,7 @@ Scoped task policies do not require changes to Antigravity settings. For legacy 
 ```
 
 - Do not set rules to `"ask"` for automated or headless environments, as `ask` acts as a denial when no interactive terminal is present.
-- Bridge does not modify `settings.json` automatically.
+- Shuttle does not modify `settings.json` automatically.
 
 ---
 

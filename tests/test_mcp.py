@@ -13,8 +13,8 @@ class McpGatewayTest(unittest.IsolatedAsyncioTestCase):
             args=["-m", "agent_shuttle.mcp_server"],
             env={
                 **os.environ,
-                "BRIDGE_CODEX_URL": "http://127.0.0.1:8765",
-                "BRIDGE_ANTIGRAVITY_URL": "http://127.0.0.1:8766",
+                "AGENT_SHUTTLE_CODEX_URL": "http://127.0.0.1:8765",
+                "AGENT_SHUTTLE_ANTIGRAVITY_URL": "http://127.0.0.1:8766",
             },
         )
         async with stdio_client(params) as (reader, writer):

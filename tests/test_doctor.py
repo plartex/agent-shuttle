@@ -16,7 +16,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
     async def test_default_checks_installed_agents_without_a_model_turn(self):
         backend = SimpleNamespace(run=AsyncMock())
         info = SimpleNamespace(fetch=AsyncMock(return_value={}))
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \
              patch("agent_shuttle.doctor.discover_harnesses", return_value={"codex": "agent-shuttle"}), \
              patch("agent_shuttle.doctor.build_builtin", return_value=(backend, info)):
             report = await diagnose()
@@ -29,7 +29,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_antigravity_readiness_failure_is_not_reported_as_install_failure(self):
         info = SimpleNamespace(check_ready=AsyncMock(side_effect=RuntimeError("secret token")))
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \
              patch("agent_shuttle.doctor.discover_harnesses", return_value={"antigravity": "agy"}), \
              patch("agent_shuttle.doctor.build_builtin", return_value=(object(), info)):
             report = await diagnose("antigravity")
@@ -43,7 +43,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
                 backend = SimpleNamespace(run=AsyncMock(return_value=SimpleNamespace(text="OK")))
                 info = (SimpleNamespace(fetch=AsyncMock(return_value={})) if target == "codex"
                         else SimpleNamespace(check_ready=AsyncMock()))
-                with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}), \
+                with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \
                      patch("agent_shuttle.doctor.discover_harnesses", return_value={target: "command"}), \
                      patch("agent_shuttle.doctor.build_builtin", return_value=(backend, info)):
                     report = await diagnose(target, smoke=True)
@@ -56,13 +56,13 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
     async def test_smoke_failure_and_missing_command(self):
         backend = SimpleNamespace(run=AsyncMock(side_effect=RuntimeError("provider error")))
         info = SimpleNamespace(fetch=AsyncMock(return_value={}))
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \
              patch("agent_shuttle.doctor.discover_harnesses", return_value={"codex": "agent-shuttle"}), \
              patch("agent_shuttle.doctor.build_builtin", return_value=(backend, info)):
             report = await diagnose("codex", smoke=True)
         self.assertEqual(report["checks"][0]["status"], "FAIL")
         self.assertFalse(report["checks"][0]["turn_verified"])
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \
              patch("agent_shuttle.doctor.discover_harnesses", return_value={}):
             missing = await diagnose("codex")
         self.assertEqual(missing["checks"][0]["level"], "install")
@@ -78,7 +78,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
             backend = SimpleNamespace(run=AsyncMock(return_value=SimpleNamespace(text="OK")),
                                       close=AsyncMock())
             info = SimpleNamespace(fetch=AsyncMock(return_value={}))
-            with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}), \
+            with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \
                  patch("agent_shuttle.doctor.build_profile", return_value=(backend, info)):
                 probe = await diagnose(profile_path=path)
                 smoke = await diagnose(profile_path=path, smoke=True)
@@ -101,7 +101,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
             backend = SimpleNamespace(close=AsyncMock())
             info = SimpleNamespace(fetch=AsyncMock(side_effect=slow_fetch))
             mapping = json.dumps({"registered": {"profile": str(path)}})
-            with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": mapping}), \
+            with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": mapping}), \
                  patch("agent_shuttle.doctor.discover_harnesses", return_value={}), \
                  patch("agent_shuttle.doctor.build_profile", return_value=(backend, info)), \
                  patch("agent_shuttle.doctor.PROBE_TIMEOUT", 0.01):
@@ -118,7 +118,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
             path.write_text(json.dumps({"id": "acp-test", "runtime": "acp",
                                         "workspace": folder,
                                         "command": [sys.executable, str(fixture)]}), encoding="utf-8")
-            with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}):
+            with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}):
                 probe = await diagnose(profile_path=path)
                 smoke = await diagnose(profile_path=path, smoke=True)
         self.assertEqual(probe["checks"][0]["status"], "OK")
@@ -127,10 +127,10 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(smoke["checks"][0]["turn_verified"])
 
     async def test_configuration_errors(self):
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "{}"}):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}):
             with self.assertRaises(DoctorConfigError):
                 await diagnose(smoke=True)
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "not json"}):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "not json"}):
             with self.assertRaises(DoctorConfigError):
                 await diagnose()
 

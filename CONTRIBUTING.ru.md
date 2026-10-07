@@ -53,21 +53,21 @@
 - **Интеграция с реальной Ollama (OpenCode и Claude Code):**
   Требует запущенного сервиса Ollama (`http://127.0.0.1:11434`) с установленной моделью:
   ```powershell
-  $env:BRIDGE_LIVE_OLLAMA_MODEL = 'qwen3.5:9b'
+  $env:AGENT_SHUTTLE_LIVE_OLLAMA_MODEL = 'qwen3.5:9b'
   # При необходимости переопределите пути к бинарникам:
-  # $env:BRIDGE_LIVE_OPENCODE_COMMAND = 'C:\tools\opencode.exe'
-  # $env:BRIDGE_LIVE_CLAUDE_COMMAND = 'C:\tools\claude.exe'
+  # $env:AGENT_SHUTTLE_LIVE_OPENCODE_COMMAND = 'C:\tools\opencode.exe'
+  # $env:AGENT_SHUTTLE_LIVE_CLAUDE_COMMAND = 'C:\tools\claude.exe'
   .\.venv\Scripts\python.exe -m unittest tests.test_live_ollama -v
   ```
 
 - **Интеграция с Antigravity в режиме полного доступа:**
   Тестирует выполнение команд через реальный `agy` в изолированном временном каталоге:
   ```powershell
-  $env:BRIDGE_LIVE_AGY_FULL_ACCESS = '1'
+  $env:AGENT_SHUTTLE_LIVE_AGY_FULL_ACCESS = '1'
   # Опциональная проверка через временный сервер A2A:
-  $env:BRIDGE_LIVE_AGY_A2A_FULL_ACCESS = '1'
+  $env:AGENT_SHUTTLE_LIVE_AGY_A2A_FULL_ACCESS = '1'
   # Опциональное переопределение пути к бинарнику:
-  # $env:BRIDGE_LIVE_AGY_COMMAND = 'C:\path\to\agy.exe'
+  # $env:AGENT_SHUTTLE_LIVE_AGY_COMMAND = 'C:\path\to\agy.exe'
   .\.venv\Scripts\python.exe -m unittest tests.test_live_antigravity_permissions -v
   ```
 

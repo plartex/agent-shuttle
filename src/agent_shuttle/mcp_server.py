@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ResourceLink, TextContent
 
-from .client import BridgeClient
+from .client import ShuttleClient
 from .managed import HarnessConfigurationMismatch, HarnessLaunch, connect_harness
 from .mcp_tasks import TaskGateway
 from .runtime_context import is_worker_context, nested_data_path, require_coordinator
@@ -29,8 +29,8 @@ _task_gateway: TaskGateway | None = None
 def _gateway() -> TaskGateway:
     global _task_gateway
     if _task_gateway is None:
-        root = Path(os.environ.get("BRIDGE_WORKSPACE") or os.getcwd())
-        registry = Path(os.environ.get("BRIDGE_TASK_REGISTRY") or root / ".agent-shuttle" / "mcp-tasks.json")
+        root = Path(os.environ.get("AGENT_SHUTTLE_WORKSPACE") or os.getcwd())
+        registry = Path(os.environ.get("AGENT_SHUTTLE_TASK_REGISTRY") or root / ".agent-shuttle" / "mcp-tasks.json")
         if is_worker_context():
             registry = nested_data_path(registry)
         _task_gateway = TaskGateway(registry)
@@ -49,7 +49,7 @@ async def _lifespan(server):
 
 
 def _debug(stage: str) -> None:
-    if os.environ.get("BRIDGE_DEBUG") == "1":
+    if os.environ.get("AGENT_SHUTTLE_DEBUG") == "1":
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         print(f"[agent-shuttle] {stamp} {stage}", file=sys.stderr, flush=True)
 
@@ -73,7 +73,7 @@ mcp = FastMCP(
         "get_result/get_transcript. A wait timeout does not cancel execution; cancel_task does. "
         "For isolated file edits explicitly set workspace_mode=isolated and workspace_write. "
         "Review get_task_changes/get_task_diff before calling apply_task_changes; changes are never applied automatically. "
-        "A Bridge inherited inside a worker rejects new tasks and task cancellation. "
+        "A Shuttle inherited inside a worker rejects new tasks and task cancellation. "
         "The legacy ask_antigravity and ask_codex tools remain available. "
         "Use get_antigravity_info or get_codex_info to check current models, efforts and account quotas. "
         "Each call starts a new remote task. Omit model unless the user explicitly names "
@@ -87,14 +87,14 @@ mcp = FastMCP(
 
 
 def _free_local_url() -> str:
-    """Choose an isolated loopback port for a per-call managed Bridge."""
+    """Choose an isolated loopback port for a per-call managed Shuttle."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         return f"http://127.0.0.1:{listener.getsockname()[1]}"
 
 
 def _workspace(value: str | None) -> Path:
-    root = Path(value or os.environ.get("BRIDGE_WORKSPACE") or os.getcwd()).resolve(strict=True)
+    root = Path(value or os.environ.get("AGENT_SHUTTLE_WORKSPACE") or os.getcwd()).resolve(strict=True)
     if not root.is_dir():
         raise ValueError("workspace must be a directory")
     return root
@@ -110,11 +110,11 @@ def _local_url(url: str) -> str:
 
 def _agent_mapping() -> dict:
     try:
-        mapping = json.loads(os.environ.get("BRIDGE_AGENTS_JSON", "{}"))
+        mapping = json.loads(os.environ.get("AGENT_SHUTTLE_AGENTS_JSON", "{}"))
     except json.JSONDecodeError as exc:
-        raise ValueError("BRIDGE_AGENTS_JSON must be a JSON object") from exc
+        raise ValueError("AGENT_SHUTTLE_AGENTS_JSON must be a JSON object") from exc
     if not isinstance(mapping, dict):
-        raise ValueError("BRIDGE_AGENTS_JSON must be a JSON object")
+        raise ValueError("AGENT_SHUTTLE_AGENTS_JSON must be a JSON object")
     return mapping
 
 
@@ -142,10 +142,10 @@ def _agent_launch(agent_id: str, workspace: str | None = None,
     name = entry.get("harness", "acp" if profile and agent_id not in
                      {"codex", "antigravity", "opencode", "claude_code"} else agent_id)
     if name not in {"codex", "antigravity", "opencode", "claude_code", "acp"}:
-        raise ValueError(f"Configure harness for agent profile {agent_id!r} in BRIDGE_AGENTS_JSON")
-    default_url = os.environ.get(f"BRIDGE_{name.upper()}_URL") if agent_id == name else None
+        raise ValueError(f"Configure harness for agent profile {agent_id!r} in AGENT_SHUTTLE_AGENTS_JSON")
+    default_url = os.environ.get(f"AGENT_SHUTTLE_{name.upper()}_URL") if agent_id == name else None
     url = _local_url(entry.get("url") or default_url or _free_local_url())
-    root = _workspace(workspace or entry.get("workspace") or os.environ.get(f"BRIDGE_{name.upper()}_WORKSPACE"))
+    root = _workspace(workspace or entry.get("workspace") or os.environ.get(f"AGENT_SHUTTLE_{name.upper()}_WORKSPACE"))
     if profile is not None and (not isinstance(profile, str) or not profile):
         raise ValueError("Agent profile must be a nonempty path")
     if name == "acp" and not profile:
@@ -164,7 +164,7 @@ async def _managed_ask(launch: HarnessLaunch, prompt: str,
                        tool_policy: str | None) -> dict:
     tool_policy = launch.tool_policy
     async def send(url: str) -> dict:
-        result = await BridgeClient().ask(
+        result = await ShuttleClient().ask(
             url, prompt, model=model, reasoning_effort=reasoning_effort,
             tool_policy=tool_policy,
         )
@@ -179,7 +179,7 @@ async def _managed_ask(launch: HarnessLaunch, prompt: str,
         async with connect_harness(active) as peer:
             if active.name == "codex" and model and not getattr(peer, "started", True):
                 try:
-                    capabilities = await BridgeClient().capabilities(peer.url)
+                    capabilities = await ShuttleClient().capabilities(peer.url)
                     listed = {
                         item.get("id") for item in capabilities.get("capabilities", {}).get("models", [])
                         if isinstance(item, dict)
@@ -191,7 +191,7 @@ async def _managed_ask(launch: HarnessLaunch, prompt: str,
                     _debug(f"codex: {model} absent from existing server catalog; starting isolated peer")
                     async with connect_harness(replace(active, url=_free_local_url())) as fresh:
                         return await send(fresh.url)
-            _debug(f"{active.name}: bridge ready, sending task")
+            _debug(f"{active.name}: shuttle ready, sending task")
             return await send(peer.url)
 
     try:
@@ -216,7 +216,7 @@ async def ask_agent(
     require_coordinator()
     legacy_url = _legacy_custom_url(agent_id)
     if legacy_url:
-        result = await BridgeClient().ask(
+        result = await ShuttleClient().ask(
             legacy_url, prompt, model=model, reasoning_effort=reasoning_effort,
             tool_policy=tool_policy,
         )
@@ -234,9 +234,9 @@ async def get_agent_info(agent_id: str, workspace: str | None = None) -> dict:
     """Read agent capabilities, launching its A2A server when absent."""
     legacy_url = _legacy_custom_url(agent_id)
     if legacy_url:
-        return await BridgeClient().info(legacy_url)
+        return await ShuttleClient().info(legacy_url)
     async with connect_harness(_agent_launch(agent_id, workspace)) as peer:
-        return await BridgeClient().info(peer.url)
+        return await ShuttleClient().info(peer.url)
 
 
 @mcp.tool()
@@ -369,14 +369,14 @@ async def get_transcript(task_id: str, cursor: int = 0, limit: int = 100) -> dic
 async def get_antigravity_info(workspace: str | None = None) -> dict:
     """Read Antigravity's current models, effort options and account quota without an agent turn."""
     async with connect_harness(_agent_launch("antigravity", workspace)) as peer:
-        return await BridgeClient().info(peer.url)
+        return await ShuttleClient().info(peer.url)
 
 
 @mcp.tool()
 async def get_codex_info(workspace: str | None = None) -> dict:
     """Read Codex's current models, supported efforts and account quota without an agent turn."""
     async with connect_harness(_agent_launch("codex", workspace)) as peer:
-        return await BridgeClient().info(peer.url)
+        return await ShuttleClient().info(peer.url)
 
 
 def main() -> None:

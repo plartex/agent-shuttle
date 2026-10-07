@@ -1,1 +1,1 @@
-"""Agent Bridge tests."""
+"""Agent Shuttle tests."""

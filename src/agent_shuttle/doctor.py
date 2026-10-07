@@ -24,14 +24,14 @@ class DoctorConfigError(ValueError):
 
 def _mapping() -> dict:
     try:
-        mapping = json.loads(os.environ.get("BRIDGE_AGENTS_JSON", "{}"))
+        mapping = json.loads(os.environ.get("AGENT_SHUTTLE_AGENTS_JSON", "{}"))
     except json.JSONDecodeError as exc:
-        raise DoctorConfigError("BRIDGE_AGENTS_JSON must be a JSON object") from exc
+        raise DoctorConfigError("AGENT_SHUTTLE_AGENTS_JSON must be a JSON object") from exc
     if not isinstance(mapping, dict):
-        raise DoctorConfigError("BRIDGE_AGENTS_JSON must be a JSON object")
+        raise DoctorConfigError("AGENT_SHUTTLE_AGENTS_JSON must be a JSON object")
     for name in mapping:
         if not isinstance(name, str) or not name:
-            raise DoctorConfigError("BRIDGE_AGENTS_JSON keys must be nonempty agent IDs")
+            raise DoctorConfigError("AGENT_SHUTTLE_AGENTS_JSON keys must be nonempty agent IDs")
         _entry(mapping, name)
     return mapping
 

@@ -25,11 +25,11 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
 
         result = SimpleNamespace(task_id="1", context_id="c", state="done", text="ok",
                                  usage={"input_tokens": 3}, details={"source": "test"})
-        with patch.dict(os.environ, {"BRIDGE_WORKSPACE": str(Path.cwd())}, clear=True), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_WORKSPACE": str(Path.cwd())}, clear=True), \
              patch("agent_shuttle.mcp_server.connect_harness", connected), \
-             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.ask", new_callable=AsyncMock,
                    return_value=result) as ask, \
-             patch("agent_shuttle.mcp_server.BridgeClient.info", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.info", new_callable=AsyncMock,
                    return_value={"ok": True}) as info:
             self.assertEqual((await ask_agent("codex", "task"))["text"], "ok")
             self.assertEqual((await ask_codex("task"))["details"], {"source": "test"})
@@ -57,7 +57,7 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
                                  usage=None, details=None)
         with patch.dict(os.environ, {}, clear=True), \
              patch("agent_shuttle.mcp_server.connect_harness", connected), \
-             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.ask", new_callable=AsyncMock,
                    return_value=result):
             answer = await ask_antigravity("task", workspace=str(Path.cwd()),
                                            tool_policy="full_access", turn_timeout_seconds=45)
@@ -66,7 +66,7 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
     async def test_custom_profile_configuration(self):
         mapping = {"local": {"harness": "opencode", "profile": "profiles/opencode.json",
                              "url": "http://127.0.0.1:8767"}}
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": json.dumps(mapping)}, clear=True):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": json.dumps(mapping)}, clear=True):
             launch = _agent_launch("local")
         self.assertEqual(launch.name, "opencode")
         self.assertEqual(launch.profile_path, Path("profiles/opencode.json"))
@@ -74,7 +74,7 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_custom_acp_profile_can_infer_harness(self):
         mapping = {"my_agent": {"profile": "profiles/acp.json"}}
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": json.dumps(mapping)}, clear=True):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": json.dumps(mapping)}, clear=True):
             launch = _agent_launch("my_agent", tool_policy="read_only")
         self.assertEqual(launch.name, "acp")
         self.assertEqual(launch.profile_path, Path("profiles/acp.json"))
@@ -93,9 +93,9 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
                                  state="TASK_STATE_COMPLETED", text="done", usage=None,
                                  details={"tool_policy_enforcement": "advisory",
                                           "warnings": ["ACP policy is advisory"]})
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": json.dumps(mapping)}, clear=True), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": json.dumps(mapping)}, clear=True), \
              patch("agent_shuttle.mcp_server.connect_harness", connected), \
-             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.ask", new_callable=AsyncMock,
                    return_value=result):
             answer = await ask_agent("my_agent", "task", tool_policy="read_only")
         self.assertEqual(launches[0].name, "acp")
@@ -104,17 +104,17 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_registry_rejects_untrusted_urls_and_names(self):
         mapping = {"remote": {"harness": "codex", "url": "https://example.com"}}
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": json.dumps(mapping)}, clear=True):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": json.dumps(mapping)}, clear=True):
             with self.assertRaisesRegex(ValueError, "loopback"):
                 _agent_launch("remote")
             with self.assertRaisesRegex(ValueError, "agent_id"):
                 _agent_launch("../remote")
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": "not-json"}, clear=True):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "not-json"}, clear=True):
             with self.assertRaisesRegex(ValueError, "JSON object"):
                 _agent_launch("local")
 
     async def test_custom_id_needs_harness_for_startup(self):
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON":
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON":
                                   '{"local":"http://127.0.0.1:8767"}'}, clear=True):
             with self.assertRaisesRegex(ValueError, "Configure harness"):
                 _agent_launch("local")
@@ -129,14 +129,14 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
 
         result = SimpleNamespace(task_id="1", context_id=None, state="TASK_STATE_COMPLETED",
                                  text="OK", usage=None, details=None)
-        with patch.dict(os.environ, {"BRIDGE_CODEX_URL": "http://127.0.0.1:8765"}, clear=True), \
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_CODEX_URL": "http://127.0.0.1:8765"}, clear=True), \
              patch("agent_shuttle.mcp_server.connect_harness", connected), \
              patch("agent_shuttle.mcp_server._free_local_url",
                    return_value="http://127.0.0.1:49152"), \
-             patch("agent_shuttle.mcp_server.BridgeClient.capabilities", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.capabilities", new_callable=AsyncMock,
                    return_value={"read_only_tools": True,
                                  "capabilities": {"models": [{"id": "gpt-6-astra"}]}}), \
-             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.ask", new_callable=AsyncMock,
                    return_value=result) as ask:
             answer = await ask_codex("hello", model="gpt-6-sol")
 
@@ -149,11 +149,11 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_custom_url_still_routes_to_running_server(self):
         result = SimpleNamespace(task_id="1", context_id=None, state="done", text="ok",
                                  usage=None, details=None)
-        with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON":
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON":
                                   '{"local":"http://127.0.0.1:8767"}'}, clear=True), \
-             patch("agent_shuttle.mcp_server.BridgeClient.ask", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.ask", new_callable=AsyncMock,
                    return_value=result) as ask, \
-             patch("agent_shuttle.mcp_server.BridgeClient.info", new_callable=AsyncMock,
+             patch("agent_shuttle.mcp_server.ShuttleClient.info", new_callable=AsyncMock,
                    return_value={"agent": "local"}) as info:
             self.assertEqual((await ask_agent("local", "hello"))["text"], "ok")
             self.assertEqual(await get_agent_info("local"), {"agent": "local"})

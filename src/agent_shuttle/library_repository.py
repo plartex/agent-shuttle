@@ -8,6 +8,8 @@ import sqlite3
 from pathlib import Path
 from time import time
 
+from .metadata_migration import backup_database, rename_json_metadata
+
 
 class LibraryTaskRepository:
     """Own the library database, its schema, lock and all SQL transactions."""
@@ -20,6 +22,7 @@ class LibraryTaskRepository:
     def open(self) -> None:
         if self._conn is not None:
             raise RuntimeError("LibraryTaskRepository is already open")
+        existed = self.path is not None and self.path.exists()
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         owner = (self.path.with_suffix(self.path.suffix + ".owner").open("a+b")
@@ -39,6 +42,11 @@ class LibraryTaskRepository:
                     fcntl.flock(owner.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             conn = sqlite3.connect(self.path or ":memory:", timeout=15)
             conn.row_factory = sqlite3.Row
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > 1:
+                raise RuntimeError(f"Unsupported library database schema version {version}")
+            if version == 0 and existed:
+                backup_database(self.path)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -89,6 +97,27 @@ class LibraryTaskRepository:
                 existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
                 if "output_schema" not in existing:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN output_schema TEXT")
+            conn.commit()
+            if version == 0:
+                conn.execute("BEGIN IMMEDIATE")
+                for task_id, seq, raw in conn.execute(
+                    "SELECT task_id, seq, data FROM events"
+                ).fetchall():
+                    if "agent_bridge." in raw:
+                        conn.execute(
+                            "UPDATE events SET data=? WHERE task_id=? AND seq=?",
+                            (rename_json_metadata(raw), task_id, seq),
+                        )
+                for column in ("usage", "details", "error", "warnings"):
+                    for task_id, raw in conn.execute(
+                        f"SELECT id, {column} FROM tasks WHERE {column} IS NOT NULL"
+                    ).fetchall():
+                        if "agent_bridge." in raw:
+                            conn.execute(
+                                f"UPDATE tasks SET {column}=? WHERE id=?",
+                                (rename_json_metadata(raw), task_id),
+                            )
+                conn.execute("PRAGMA user_version=1")
             conn.commit()
             self._owner, self._conn = owner, conn
         except BaseException:

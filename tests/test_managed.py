@@ -1,4 +1,4 @@
-"""Lifecycle contracts for the reusable Bridge server manager."""
+"""Lifecycle contracts for the reusable Shuttle server manager."""
 
 import json
 import os
@@ -100,7 +100,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             launch = HarnessLaunch(
                 "opencode", "http://127.0.0.1:8767", root, model="qwen3.5:9b",
                 command="C:/tools/opencode.exe", tool_policy="full_access",
-                log_path=root / "bridge.log",
+                log_path=root / "shuttle.log",
             )
             client = SimpleNamespace(identity=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "opencode", "workspace": str(root.resolve()),
@@ -173,7 +173,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             root = Path(folder)
             launch = HarnessLaunch(
                 "opencode", "http://127.0.0.1:8767", root, model="qwen3.5:9b",
-                command="C:/tools/opencode.exe", log_path=root / "bridge.log",
+                command="C:/tools/opencode.exe", log_path=root / "shuttle.log",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "opencode", "workspace": str(root.resolve()),
@@ -211,7 +211,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             profile = root / "cloud-profile.json"
             profile.write_text('{"id":"custom"}', encoding="utf-8")
             launch = HarnessLaunch("claude_code", "http://127.0.0.1:8768", root,
-                                   profile_path=profile, log_path=root / "bridge.log")
+                                   profile_path=profile, log_path=root / "shuttle.log")
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "claude_code", "workspace": str(root.resolve()),
                                     "read_only_tools": False},
@@ -228,7 +228,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_started_server_stops_after_caller_error(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
-                                   command="agent-bridge")
+                                   command="agent-shuttle")
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
                                     "read_only_tools": True},
@@ -277,7 +277,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             root = Path(folder)
             launch = HarnessLaunch(
                 "opencode", "http://127.0.0.1:8767", root, model="qwen3.5:9b",
-                command="C:/tools/opencode.exe", tool_policy="read_only", log_path=root / "bridge.log",
+                command="C:/tools/opencode.exe", tool_policy="read_only", log_path=root / "shuttle.log",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "opencode", "workspace": str(root.resolve()),
@@ -326,7 +326,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             root = Path(folder)
             launch = HarnessLaunch(
                 "antigravity", "http://127.0.0.1:8766", root,
-                command="C:/tools/agy.exe", log_path=root / "bridge.log",
+                command="C:/tools/agy.exe", log_path=root / "shuttle.log",
                 agy_dangerously_skip_permissions=True,
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
@@ -346,7 +346,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             root = Path(folder)
             launch = HarnessLaunch(
                 "antigravity", "http://127.0.0.1:8766", root,
-                command="C:/tools/agy.exe", log_path=root / "bridge.log",
+                command="C:/tools/agy.exe", log_path=root / "shuttle.log",
             )
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "agy_cli", "workspace": str(root.resolve()),
@@ -365,7 +365,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
             root = Path(folder)
             launch = HarnessLaunch(
                 "antigravity", "http://127.0.0.1:8766", root,
-                command="C:/tools/agy.exe", log_path=root / "bridge.log",
+                command="C:/tools/agy.exe", log_path=root / "shuttle.log",
                 agy_turn_timeout_seconds=42,
             )
             client = SimpleNamespace(identity=AsyncMock(side_effect=[

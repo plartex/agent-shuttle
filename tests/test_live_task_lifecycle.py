@@ -12,7 +12,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
-@unittest.skipUnless(os.environ.get("BRIDGE_LIVE_TASK_LIFECYCLE") == "1", "requires live signed-in harnesses")
+@unittest.skipUnless(os.environ.get("AGENT_SHUTTLE_LIVE_TASK_LIFECYCLE") == "1", "requires live signed-in harnesses")
 class LiveTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_review_paging_cancel_and_reopen_after_gateway_restart(self):
         repository = Path(__file__).resolve().parents[1]
@@ -25,9 +25,9 @@ class LiveTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
             original = f'MARKER = "{marker}"\n\ndef clamp(value, low, high):\n    return min(low, max(value, high))\n'
             source.write_text(original, encoding="utf-8")
             env = {key: value for key, value in os.environ.items()
-                   if key not in {"BRIDGE_CODEX_URL", "BRIDGE_ANTIGRAVITY_URL", "BRIDGE_AGENTS_JSON"}}
-            env.update(BRIDGE_WORKSPACE=str(root), BRIDGE_TASK_REGISTRY=str(root / "tickets.json"),
-                       BRIDGE_AGY_COMMAND=str(repository / "bin" / "agy.exe"))
+                   if key not in {"AGENT_SHUTTLE_CODEX_URL", "AGENT_SHUTTLE_ANTIGRAVITY_URL", "AGENT_SHUTTLE_AGENTS_JSON"}}
+            env.update(AGENT_SHUTTLE_WORKSPACE=str(root), AGENT_SHUTTLE_TASK_REGISTRY=str(root / "tickets.json"),
+                       AGENT_SHUTTLE_AGY_COMMAND=str(repository / "bin" / "agy.exe"))
             params = StdioServerParameters(command=sys.executable, args=["-m", "agent_shuttle.mcp_server"], env=env)
             recorded = []
             ticket = None
