@@ -809,7 +809,7 @@ class AntigravitySdkBackend:
             process.kill()
             await process.wait()
             raise
-        marker = b"AGENT_BRIDGE_RESULT="
+        marker = b"AGENT_SHUTTLE_RESULT="
         lines = [line[len(marker):] for line in stdout.splitlines() if line.startswith(marker)]
         if process.returncode or not lines:
             detail = stderr.decode(errors="replace")[-4000:]

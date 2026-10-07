@@ -18,7 +18,7 @@ from agent_shuttle.a2a_server import make_app
 from agent_shuttle.backends import (
     AntigravityCliBackend, AntigravityPermissionDenied, BackendResponse, CodexBackend,
 )
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from agent_shuttle.profiled import ProfiledBackend
 from agent_shuttle.profiles import AgentProfile
 
@@ -84,7 +84,7 @@ class PolicyEchoBackend(EchoBackend):
         return BackendResponse("policy reply", {"input_tokens": 3}, {"cache_status": "unknown"})
 
 
-class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
+class ShuttleProtocolTest(unittest.IsolatedAsyncioTestCase):
     async def test_identity_reports_enforceable_policies_without_an_agent_turn(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -112,7 +112,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                         transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765",
                         headers={"Authorization": "Bearer " + app.state.local_credential.token},
                     ) as http:
-                        result = (await http.get("/bridge/identity")).json()
+                        result = (await http.get("/shuttle/identity")).json()
                     self.assertEqual(result["supported_tool_policies"], policies)
                     self.assertEqual(result["default_tool_policy"], default)
                     if isinstance(backend, AntigravityCliBackend) and backend.dangerously_skip_permissions:
@@ -125,22 +125,22 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                         self.assertFalse(result["read_only_tools"])
 
     async def test_old_peer_without_identity_requires_restart(self):
-        request = httpx.Request("GET", "http://127.0.0.1:8766/bridge/identity")
+        request = httpx.Request("GET", "http://127.0.0.1:8766/shuttle/identity")
         response = httpx.Response(404, request=request)
-        with patch.object(BridgeClient, "_get", new_callable=AsyncMock,
+        with patch.object(ShuttleClient, "_get", new_callable=AsyncMock,
                           side_effect=httpx.HTTPStatusError(
                               "not found", request=request, response=response,
                           )):
             with self.assertRaisesRegex(ValueError, "restart"):
-                await BridgeClient().identity("http://127.0.0.1:8766")
+                await ShuttleClient().identity("http://127.0.0.1:8766")
 
     async def test_identity_request_has_short_deadline(self):
         async def stalled(*args):
             await asyncio.Event().wait()
 
-        with patch.object(BridgeClient, "_get", new=stalled):
+        with patch.object(ShuttleClient, "_get", new=stalled):
             with self.assertRaises(TimeoutError):
-                await BridgeClient(timeout_seconds=0.01).identity("http://127.0.0.1:8766")
+                await ShuttleClient(timeout_seconds=0.01).identity("http://127.0.0.1:8766")
 
     async def test_identity_is_static_even_when_agy_info_is_unavailable(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -153,7 +153,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8766",
                 headers={"Authorization": "Bearer " + app.state.local_credential.token},
             ) as http:
-                response = await http.get("/bridge/identity")
+                response = await http.get("/shuttle/identity")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["backend"], "agy_cli")
             self.assertEqual(response.json()["pid"], os.getpid())
@@ -179,7 +179,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                     transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765",
                     headers={"Authorization": "Bearer " + app.state.local_credential.token},
                 ) as http:
-                    response = await http.get("/bridge/capabilities")
+                    response = await http.get("/shuttle/capabilities")
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["workspace"], str(Path(folder).resolve()))
                 self.assertIs(response.json()["read_only_tools"], supported)
@@ -195,7 +195,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8766",
                 headers={"Authorization": "Bearer " + app.state.local_credential.token},
             ) as http:
-                response = await http.get("/bridge/capabilities")
+                response = await http.get("/shuttle/capabilities")
             self.assertEqual(response.json()["agy_permission_mode"], "all")
 
     async def test_permission_denial_is_failed_task_without_success_artifact(self):
@@ -223,7 +223,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0.03)
                 else:
                     self.fail("A2A server did not start")
-            result = await BridgeClient().ask(url, "do the full task")
+            result = await ShuttleClient().ask(url, "do the full task")
             self.assertEqual(result.state, "TASK_STATE_FAILED")
             self.assertIn("RunCommand", result.text)
             self.assertIsNone(result.usage)
@@ -251,20 +251,21 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.fail("A2A server did not start")
                 http.headers["Authorization"] = "Bearer " + app.state.local_credential.token
-                self.assertEqual((await http.get(url + "/bridge/info")).status_code, 503)
-                self.assertEqual((await http.delete(url + "/bridge/sessions/not-a-uuid")).status_code, 400)
+                self.assertEqual((await http.get(url + "/shuttle/info")).status_code, 503)
+                self.assertEqual((await http.delete(url + "/shuttle/sessions/not-a-uuid")).status_code, 400)
                 client = await create_client(url, ClientConfig(streaming=False, httpx_client=http))
                 try:
                     examples = [
                         ("", {}),
-                        ("hello", {"agent_bridge.model": ""}),
-                        ("hello", {"agent_bridge.reasoning_effort": 1}),
-                        ("hello", {"agent_bridge.read_only": "yes"}),
-                        ("hello", {"agent_bridge.tool_policy": "invalid"}),
-                        ("hello", {"agent_bridge.read_only": True,
-                                   "agent_bridge.tool_policy": "workspace_write"}),
-                        ("hello", {"agent_bridge.session_id": "not-a-uuid"}),
-                        ("hello", {"agent_bridge.session_id": str(uuid.uuid4())}),
+                        ("hello", {"agent_shuttle.model": ""}),
+                        ("hello", {"agent_shuttle.reasoning_effort": 1}),
+                        ("hello", {"agent_shuttle.read_only": "yes"}),
+                        ("hello", {"agent_shuttle.tool_policy": "invalid"}),
+                        ("hello", {"agent_shuttle.read_only": True,
+                                   "agent_shuttle.tool_policy": "workspace_write"}),
+                        ("hello", {"agent_shuttle.session_id": "not-a-uuid"}),
+                        ("hello", {"agent_shuttle.session_id": str(uuid.uuid4())}),
+                        ("hello", {"agent_bridge.model": "obsolete"}),
                     ]
                     for prompt, metadata in examples:
                         with self.subTest(metadata=metadata):
@@ -305,11 +306,11 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0.03)
                 else:
                     self.fail("A2A server did not start")
-            result = await BridgeClient().ask(url, "hello", tool_policy="no_tools")
+            result = await ShuttleClient().ask(url, "hello", tool_policy="no_tools")
             self.assertEqual(backend.policy, "no_tools")
             self.assertEqual(result.details["cache_status"], "unknown")
             with self.assertRaisesRegex(ValueError, "tool_policy"):
-                await BridgeClient().ask(url, "hello", tool_policy="invalid")
+                await ShuttleClient().ask(url, "hello", tool_policy="invalid")
         finally:
             server.should_exit = True
             await running
@@ -337,7 +338,7 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                     self.fail("A2A server did not start")
                 card = response.json()
                 self.assertEqual(card["name"], "Codex local agent")
-            result = await BridgeClient().ask(url, "привет")
+            result = await ShuttleClient().ask(url, "привет")
             self.assertEqual(result.state, "TASK_STATE_COMPLETED")
             self.assertEqual(
                 result.text,
@@ -345,12 +346,12 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(result.task_id)
             self.assertEqual(result.usage, {"input_tokens": 123, "output_tokens": 7, "total_tokens": 130})
-            selected = await BridgeClient().ask(url, "привет", model="chosen-model")
+            selected = await ShuttleClient().ask(url, "привет", model="chosen-model")
             self.assertEqual(
                 selected.text,
                 "echo: привет; model: chosen-model; effort: default; read_only: False",
             )
-            configured = await BridgeClient().ask(
+            configured = await ShuttleClient().ask(
                 url,
                 "привет",
                 model="chosen-model",
@@ -360,17 +361,17 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
                 configured.text,
                 "echo: привет; model: chosen-model; effort: high; read_only: False",
             )
-            read_only = await BridgeClient().ask(url, "проверка", read_only=True)
+            read_only = await ShuttleClient().ask(url, "проверка", read_only=True)
             self.assertEqual(
                 read_only.text,
                 "echo: проверка; model: default; effort: default; read_only: True",
             )
-            info = await BridgeClient().info(url)
+            info = await ShuttleClient().info(url)
             self.assertEqual(info["capabilities"]["selected_model"], "test-model")
             self.assertTrue(info["usage"]["available"])
-            self.assertNotIn("usage", await BridgeClient().capabilities(url))
-            self.assertNotIn("capabilities", await BridgeClient().usage(url))
-            async with BridgeClient().session(
+            self.assertNotIn("usage", await ShuttleClient().capabilities(url))
+            self.assertNotIn("capabilities", await ShuttleClient().usage(url))
+            async with ShuttleClient().session(
                 url, model="chosen-model", reasoning_effort="high", read_only=True,
             ) as session:
                 first = await session.ask("first")
@@ -393,11 +394,11 @@ class BridgeProtocolTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_prompt_is_rejected_locally(self):
         with self.assertRaises(ValueError):
-            await BridgeClient().ask("http://127.0.0.1:1", "  ")
+            await ShuttleClient().ask("http://127.0.0.1:1", "  ")
         with self.assertRaises(ValueError):
-            await BridgeClient().ask("http://127.0.0.1:1", "hello", model=" ")
+            await ShuttleClient().ask("http://127.0.0.1:1", "hello", model=" ")
         with self.assertRaises(ValueError):
-            await BridgeClient().ask("http://127.0.0.1:1", "hello", reasoning_effort=" ")
+            await ShuttleClient().ask("http://127.0.0.1:1", "hello", reasoning_effort=" ")
 
 
 if __name__ == "__main__":

@@ -12,8 +12,8 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
-@unittest.skipUnless(os.environ.get("BRIDGE_LIVE_AGY_SCOPED") == "1",
-                     "requires BRIDGE_LIVE_AGY_SCOPED=1")
+@unittest.skipUnless(os.environ.get("AGENT_SHUTTLE_LIVE_AGY_SCOPED") == "1",
+                     "requires AGENT_SHUTTLE_LIVE_AGY_SCOPED=1")
 class LiveScopedMcpTests(unittest.IsolatedAsyncioTestCase):
     async def test_fresh_mcp_client_reviews_then_edits_with_scoped_permissions(self):
         repository = Path(__file__).resolve().parents[1]
@@ -30,8 +30,8 @@ class LiveScopedMcpTests(unittest.IsolatedAsyncioTestCase):
             ]}]},
         }), encoding="utf-8")
         env = {key: value for key, value in os.environ.items()
-               if key not in {"BRIDGE_CODEX_URL", "BRIDGE_ANTIGRAVITY_URL", "BRIDGE_AGENTS_JSON"}}
-        env["BRIDGE_AGY_COMMAND"] = str(repository / "bin" / "agy.exe")
+               if key not in {"AGENT_SHUTTLE_CODEX_URL", "AGENT_SHUTTLE_ANTIGRAVITY_URL", "AGENT_SHUTTLE_AGENTS_JSON"}}
+        env["AGENT_SHUTTLE_AGY_COMMAND"] = str(repository / "bin" / "agy.exe")
         params = StdioServerParameters(command=sys.executable, args=["-m", "agent_shuttle.mcp_server"], env=env)
         results = []
         async with asyncio.timeout(240):

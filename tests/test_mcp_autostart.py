@@ -14,7 +14,7 @@ from agent_shuttle import mcp_server
 class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
     async def test_builtin_agent_uses_managed_server_without_url_configuration(self):
         with tempfile.TemporaryDirectory() as folder, \
-             patch.dict(os.environ, {"BRIDGE_WORKSPACE": folder}, clear=True):
+             patch.dict(os.environ, {"AGENT_SHUTTLE_WORKSPACE": folder}, clear=True):
             launches = []
 
             @asynccontextmanager
@@ -27,7 +27,7 @@ class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
                 text="done", usage=None, details=None,
             )))
             with patch.object(mcp_server, "connect_harness", connection), \
-                 patch.object(mcp_server, "BridgeClient", return_value=client):
+                 patch.object(mcp_server, "ShuttleClient", return_value=client):
                 result = await mcp_server.ask_agent("codex", "Summarize this project")
 
             self.assertEqual(result["text"], "done")
@@ -39,7 +39,7 @@ class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_client_does_not_need_local_instructions_to_choose_safe_defaults(self):
         with tempfile.TemporaryDirectory() as folder, \
-             patch.dict(os.environ, {"BRIDGE_WORKSPACE": folder}, clear=True):
+             patch.dict(os.environ, {"AGENT_SHUTTLE_WORKSPACE": folder}, clear=True):
             for name in ("codex", "antigravity"):
                 self.assertEqual(mcp_server._agent_launch(name).tool_policy, "read_only")
                 self.assertEqual(mcp_server._agent_launch(name, tool_policy="workspace_write").tool_policy,
@@ -63,7 +63,7 @@ class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
                 text="done", usage=None, details=None,
             )))
             with patch.object(mcp_server, "connect_harness", connection), \
-                 patch.object(mcp_server, "BridgeClient", return_value=client):
+                 patch.object(mcp_server, "ShuttleClient", return_value=client):
                 result = await mcp_server.ask_antigravity("Inspect this project", workspace=folder)
             self.assertEqual(result["text"], "done")
             self.assertEqual(len(launches), 2)
@@ -75,8 +75,8 @@ class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
             profile = Path(folder) / "opencode.json"
             profile.write_text("{}", encoding="utf-8")
             config = '{"local": {"harness": "opencode", "profile": "' + str(profile).replace("\\", "\\\\") + '"}}'
-            with patch.dict(os.environ, {"BRIDGE_AGENTS_JSON": config,
-                                      "BRIDGE_WORKSPACE": folder}, clear=True):
+            with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": config,
+                                      "AGENT_SHUTTLE_WORKSPACE": folder}, clear=True):
                 launch = mcp_server._agent_launch("local")
             self.assertEqual(launch.name, "opencode")
             self.assertEqual(launch.profile_path, profile)
@@ -84,14 +84,14 @@ class McpAutostartTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_url_is_local_and_reusable(self):
         with tempfile.TemporaryDirectory() as folder:
-            with patch.dict(os.environ, {"BRIDGE_CODEX_URL": "http://127.0.0.1:8765",
-                                      "BRIDGE_WORKSPACE": folder}, clear=True):
+            with patch.dict(os.environ, {"AGENT_SHUTTLE_CODEX_URL": "http://127.0.0.1:8765",
+                                      "AGENT_SHUTTLE_WORKSPACE": folder}, clear=True):
                 launch = mcp_server._agent_launch("codex")
             self.assertEqual(launch.url, "http://127.0.0.1:8765")
             self.assertTrue(launch.start_if_missing)
 
     async def test_rejects_remote_url(self):
-        with patch.dict(os.environ, {"BRIDGE_CODEX_URL": "http://example.com:8765"}, clear=True):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_CODEX_URL": "http://example.com:8765"}, clear=True):
             with self.assertRaisesRegex(ValueError, "loopback"):
                 mcp_server._agent_launch("codex")
 

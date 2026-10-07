@@ -9,7 +9,7 @@ This document outlines the security architecture, trust boundaries, known operat
 ## Localhost Binding & Authentication
 
 - **Loopback Only:** Agent Shuttle servers bind strictly to `127.0.0.1` (loopback).
-- **Bearer by default:** Each server start creates a fresh local Bearer credential. All task and `/bridge/*` endpoints require it; only the public Agent Card and `/bridge/proof` are unauthenticated. The server also checks the exact `Host` and rejects requests with an `Origin` header.
+- **Bearer by default:** Each server start creates a fresh local Bearer credential. All task and `/shuttle/*` endpoints require it; only the public Agent Card and `/shuttle/proof` are unauthenticated. The server also checks the exact `Host` and rejects requests with an `Origin` header.
 - **Credential location:** The per-port record is outside the project, under `%LOCALAPPDATA%\AgentShuttle\run` on Windows and `$XDG_RUNTIME_DIR/agent-shuttle` or `~/.local/state/agent-shuttle/run` on POSIX. The directory and file are restricted to the current OS user. Python and CLI clients discover it automatically and verify a nonce proof before sending Bearer. Other A2A clients can read the record as that user and send standard HTTP Bearer.
 - **Trust boundary:** This protects against other OS users and requests from websites. A process under the same user account can read the record and is outside this boundary. Remote access needs a separate TLS and credential architecture; keep the server bound to `127.0.0.1`.
 
@@ -20,7 +20,7 @@ This document outlines the security architecture, trust boundaries, known operat
 The `full_access` policy (and `--agy-dangerously-skip-permissions` for Antigravity) completely removes tool approval gates:
 
 1. **Server-Wide Scope:**  
-   Enabling `full_access` affects the entire running Bridge server instance and all subsequent task turns. It is not confined to a single request or directory.
+   Enabling `full_access` affects the entire running Shuttle server instance and all subsequent task turns. It is not confined to a single request or directory.
 2. **Arbitrary Command Execution:**  
    Under `full_access`, the agent can execute shell commands, read/write files outside the workspace, and mutate host system configuration with the permissions of the user running the process.
 3. **Untrusted Tasks:**  

@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -118,6 +119,28 @@ class ComponentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repository.task("old-task")["prompt"], "before upgrade")
         self.assertIn("output_schema", repository.task("old-task"))
         self.assertIn("warnings", repository.task("old-task"))
+
+    async def test_legacy_event_metadata_migrates_once_with_backup(self):
+        repository = LibraryTaskRepository(self.path)
+        repository.open()
+        repository.create_task({"id": "historic", "agent_id": "fake", "prompt": "old"},
+                               {"agent_bridge.event": "progress", "text": "agent_bridge.event"})
+        repository.close()
+        with contextlib.closing(sqlite3.connect(self.path)) as connection:
+            connection.execute("PRAGMA user_version=0")
+            connection.commit()
+        repository.open()
+        try:
+            event = json.loads(repository.event("historic", 0))
+            self.assertEqual(event["agent_shuttle.event"], "progress")
+            self.assertEqual(event["text"], "agent_bridge.event")
+            self.assertEqual(repository.task("historic")["prompt"], "old")
+        finally:
+            repository.close()
+        self.assertEqual(len(list(self.root.glob("library.sqlite3.pre-0.7-*.sqlite3"))), 1)
+        repository.open()
+        repository.close()
+        self.assertEqual(len(list(self.root.glob("library.sqlite3.pre-0.7-*.sqlite3"))), 1)
 
     async def test_repository_releases_exclusive_owner_lock_on_close(self):
         first = LibraryTaskRepository(self.path)

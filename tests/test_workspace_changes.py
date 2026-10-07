@@ -14,7 +14,7 @@ from agent_shuttle.workspace_changes import GitWorktreeProvider
 from agent_shuttle import workspace_changes
 from agent_shuttle.library_repository import LibraryTaskRepository
 from agent_shuttle.a2a_server import make_app
-from agent_shuttle.client import BridgeClient
+from agent_shuttle.client import ShuttleClient
 from agent_shuttle import mcp_server
 import httpx
 import uvicorn
@@ -262,7 +262,7 @@ class TransportTest(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0.03)
                 else:
                     self.fail("A2A server did not start")
-            client = BridgeClient(timeout_seconds=5)
+            client = ShuttleClient(timeout_seconds=5)
             handle = await client.submit(url, "transport", tool_policy="workspace_write",
                                          workspace_mode="isolated")
             self.assertEqual((await handle.result()).state, "TASK_STATE_COMPLETED")

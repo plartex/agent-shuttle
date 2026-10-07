@@ -1,4 +1,4 @@
-"""A listening Bridge must have verified Antigravity's account context."""
+"""A listening Shuttle must have verified Antigravity's account context."""
 
 import json
 import tempfile
@@ -40,7 +40,7 @@ class AntigravityStartupTests(unittest.TestCase):
                            return_value=Process(stderr=DENIED_PROFILE, returncode=1)) as spawn:
                     with self.assertRaisesRegex(AntigravityAuthenticationError, "outside the caller's sandbox"):
                         with TestClient(app):
-                            self.fail("Bridge advertised readiness despite an inaccessible CLI profile")
+                            self.fail("Shuttle advertised readiness despite an inaccessible CLI profile")
                 spawn.assert_called_once()
 
     def test_accessible_profile_is_checked_without_a_model_turn(self):
@@ -55,7 +55,7 @@ class AntigravityStartupTests(unittest.TestCase):
                        return_value=Process(stdout=envelope)) as spawn:
                 with TestClient(app, base_url="http://127.0.0.1:8766",
                                 headers={"Authorization": "Bearer " + app.state.local_credential.token}) as client:
-                    self.assertEqual(client.get("/bridge/identity").status_code, 200)
+                    self.assertEqual(client.get("/shuttle/identity").status_code, 200)
             spawn.assert_called_once()
             self.assertEqual(spawn.call_args.args[1:], ("--output-format", "json", "models"))
 

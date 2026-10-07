@@ -16,7 +16,12 @@ class AgentShuttleBrandingTests(unittest.TestCase):
     def test_public_python_namespace(self):
         import agent_shuttle
 
-        self.assertIs(agent_shuttle.ShuttleClient, agent_shuttle.BridgeClient)
+        from agent_shuttle.client import ShuttleClient
+
+        self.assertIs(agent_shuttle.ShuttleClient, ShuttleClient)
+        for old_name in ("BridgeClient", "BridgeSession", "BridgeResult",
+                         "BridgeEvent", "BridgeConnection"):
+            self.assertFalse(hasattr(agent_shuttle, old_name))
         self.assertTrue(callable(agent_shuttle.connect_harness))
 
     def test_mcp_server_advertises_new_name(self):

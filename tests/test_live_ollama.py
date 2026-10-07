@@ -1,4 +1,4 @@
-"""Opt-in live local tests; never run in CI without BRIDGE_LIVE_OLLAMA_MODEL."""
+"""Opt-in live local tests; never run in CI without AGENT_SHUTTLE_LIVE_OLLAMA_MODEL."""
 
 import os
 import unittest
@@ -8,19 +8,19 @@ from agent_shuttle.profiles import AgentProfile
 from agent_shuttle.registry import build_profile
 
 
-@unittest.skipUnless(os.environ.get("BRIDGE_LIVE_OLLAMA_MODEL"), "local Ollama model not configured")
+@unittest.skipUnless(os.environ.get("AGENT_SHUTTLE_LIVE_OLLAMA_MODEL"), "local Ollama model not configured")
 class LiveOllamaTests(unittest.IsolatedAsyncioTestCase):
     async def _ask(self, runtime: str) -> None:
-        model = os.environ["BRIDGE_LIVE_OLLAMA_MODEL"]
+        model = os.environ["AGENT_SHUTTLE_LIVE_OLLAMA_MODEL"]
         profile = AgentProfile.from_mapping({
             "id": f"{runtime}-live", "runtime": runtime, "provider": "ollama",
             "workspace": str(Path(__file__).resolve().parents[1]),
             "default_model": model, "allowed_models": [model],
             "reasoning_efforts": ["none"] if runtime == "opencode" else [],
             "max_tool_policy": "no_tools",
-            "turn_timeout_seconds": float(os.environ.get("BRIDGE_LIVE_TURN_TIMEOUT_SECONDS", "120")),
+            "turn_timeout_seconds": float(os.environ.get("AGENT_SHUTTLE_LIVE_TURN_TIMEOUT_SECONDS", "120")),
             "runtime_command": os.environ.get(
-                "BRIDGE_LIVE_OPENCODE_COMMAND" if runtime == "opencode" else "BRIDGE_LIVE_CLAUDE_COMMAND",
+                "AGENT_SHUTTLE_LIVE_OPENCODE_COMMAND" if runtime == "opencode" else "AGENT_SHUTTLE_LIVE_CLAUDE_COMMAND",
                 "opencode" if runtime == "opencode" else "claude",
             ),
         })

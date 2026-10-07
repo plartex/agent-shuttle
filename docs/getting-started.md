@@ -109,7 +109,7 @@ If an executable is located outside standard search paths, you can provide an ov
 ```powershell
 agent-shuttle discover --agy-command 'D:\tools\agy.exe'
 # Or via environment variable:
-$env:BRIDGE_AGY_COMMAND = 'D:\tools\agy.exe'
+$env:AGENT_SHUTTLE_AGY_COMMAND = 'D:\tools\agy.exe'
 ```
 
 ---
@@ -155,7 +155,7 @@ Each server provides read-only HTTP endpoints on loopback:
 
 - **Identity check** (fast, zero model execution):
   ```powershell
-  Invoke-RestMethod http://127.0.0.1:8765/bridge/identity
+  Invoke-RestMethod http://127.0.0.1:8765/shuttle/identity
   ```
   Returns `{"agent": "codex", "backend": "codex_app_server", "workspace": "C:\\path\\to\\project", ...}`.
 
@@ -208,10 +208,10 @@ tool_timeout_sec = 1800
 env_vars = ["AGENT_SHUTTLE_PARENT_CONTEXT"]
 
 [mcp_servers.agent_shuttle.env]
-BRIDGE_WORKSPACE = "C:/path/to/project"
+AGENT_SHUTTLE_WORKSPACE = "C:/path/to/project"
 ```
 
-The TOML example is for a client that accepts `mcp_servers` entries. Clients using JSON require the same `command` and `env` values in their own JSON structure. No separate `agent-shuttle serve` command is needed for MCP requests: Agent Shuttle starts a temporary server if no suitable peer is running. Set `BRIDGE_WORKSPACE` to the project you want the agent to inspect.
+The TOML example is for a client that accepts `mcp_servers` entries. Clients using JSON require the same `command` and `env` values in their own JSON structure. No separate `agent-shuttle serve` command is needed for MCP requests: Agent Shuttle starts a temporary server if no suitable peer is running. Set `AGENT_SHUTTLE_WORKSPACE` to the project you want the agent to inspect.
 Codex uses `env_vars` to forward the worker marker to an inherited MCP child. If another host clears its MCP child environment, configure it to forward `AGENT_SHUTTLE_PARENT_CONTEXT` as well.
 
 Then invoke tools in your agent chats:

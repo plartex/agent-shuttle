@@ -32,7 +32,7 @@ def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]
         result["codex"] = "agent-shuttle"
     for name, default in (("antigravity", "agy"), ("opencode", "opencode"),
                           ("claude_code", "claude")):
-        environment_command = os.environ.get("BRIDGE_AGY_COMMAND") if name == "antigravity" else None
+        environment_command = os.environ.get("AGENT_SHUTTLE_AGY_COMMAND") if name == "antigravity" else None
         command = overrides.get(name) or environment_command or default
         found = shutil.which(command)
         if found is None and _is_file(Path(command)):

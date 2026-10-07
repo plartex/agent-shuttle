@@ -10,21 +10,24 @@ import os
 from pathlib import Path
 from typing import Any
 
+from google.protobuf.message import DecodeError
+
 from a2a.helpers import new_text_message
 from a2a.server.context import ServerCallContext
 from a2a.server.owner_resolver import OwnerResolver, resolve_user_scope
 from a2a.server.tasks.task_store import TaskStore
 from a2a.types import a2a_pb2
-from a2a.types.a2a_pb2 import Task, TaskState
+from a2a.types.a2a_pb2 import SendMessageRequest, Task, TaskState
 from a2a.utils.constants import DEFAULT_LIST_TASKS_PAGE_SIZE
 from a2a.utils.errors import InvalidParamsError
 from a2a.utils.task import decode_page_token, encode_page_token
 
 from .runtime_context import is_worker_context, nested_data_path
+from .metadata_migration import backup_database, rename_protobuf_metadata
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 class SQLiteTaskStore(TaskStore):
@@ -41,7 +44,12 @@ class SQLiteTaskStore(TaskStore):
         self.owner_resolver = owner_resolver or resolve_user_scope
         self._write_lock = asyncio.Lock()
         self._owner_file = None
-        self._init_db()
+        try:
+            self._init_db()
+        finally:
+            # A migration takes the owner lock only for its duration. Normal
+            # server ownership is acquired later by the server lifespan.
+            self.close()
 
     def acquire_owner(self):
         """Prevent a second server from recovering tasks owned by a live server."""
@@ -75,6 +83,7 @@ class SQLiteTaskStore(TaskStore):
                 raise
 
     def _init_db(self) -> None:
+        existed = self.path.exists()
         if str(self.path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +97,9 @@ class SQLiteTaskStore(TaskStore):
                     f"Unsupported SQLiteTaskStore schema version {version}; "
                     f"expected <= {CURRENT_SCHEMA_VERSION}"
                 )
+            if existed and version < CURRENT_SCHEMA_VERSION:
+                self.acquire_owner()
+                backup_database(self.path)
             if version == 0:
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute("""
@@ -136,7 +148,36 @@ class SQLiteTaskStore(TaskStore):
                     CREATE INDEX IF NOT EXISTS idx_tasks_owner_state_updated
                     ON tasks(owner, state, status_timestamp_iso DESC, task_id DESC)
                 """)
-                conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
+                conn.execute("PRAGMA user_version = 2")
+                conn.commit()
+                version = 2
+            if version == 2:
+                conn.execute("BEGIN IMMEDIATE")
+                for owner, task_id, raw in conn.execute(
+                    "SELECT owner, task_id, task_data FROM tasks"
+                ).fetchall():
+                    task = Task()
+                    task.ParseFromString(raw)
+                    if rename_protobuf_metadata(task):
+                        conn.execute(
+                            "UPDATE tasks SET task_data=? WHERE owner=? AND task_id=?",
+                            (task.SerializeToString(), owner, task_id),
+                        )
+                for owner, request_id, raw in conn.execute(
+                    "SELECT owner, request_id, fingerprint FROM request_bindings"
+                ).fetchall():
+                    request = SendMessageRequest()
+                    try:
+                        request.ParseFromString(raw)
+                    except DecodeError:
+                        # Direct callers may have stored opaque fingerprints.
+                        continue
+                    if rename_protobuf_metadata(request):
+                        conn.execute(
+                            "UPDATE request_bindings SET fingerprint=? WHERE owner=? AND request_id=?",
+                            (request.SerializeToString(deterministic=True), owner, request_id),
+                        )
+                conn.execute("PRAGMA user_version = 3")
                 conn.commit()
 
     def _resolve_owner(self, context: ServerCallContext | None = None) -> str:
@@ -358,7 +399,7 @@ class SQLiteTaskStore(TaskStore):
                     task.status.state = TaskState.TASK_STATE_FAILED
                     task.status.message.CopyFrom(new_text_message(message_text))
                     task.status.timestamp.GetCurrentTime()
-                    task.metadata["agent_bridge.error"] = {
+                    task.metadata["agent_shuttle.error"] = {
                         "code": "server_restarted",
                         "message": message_text,
                     }

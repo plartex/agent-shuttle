@@ -41,9 +41,9 @@ class McpTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
             running = asyncio.create_task(server.serve())
             while not server.started:
                 await asyncio.sleep(0.01)
-            env = {**os.environ, "BRIDGE_WORKSPACE": folder,
-                   "BRIDGE_ANTIGRAVITY_URL": url, "BRIDGE_AGENTS_JSON": "{}",
-                   "BRIDGE_TASK_REGISTRY": str(Path(folder) / "tickets.json")}
+            env = {**os.environ, "AGENT_SHUTTLE_WORKSPACE": folder,
+                   "AGENT_SHUTTLE_ANTIGRAVITY_URL": url, "AGENT_SHUTTLE_AGENTS_JSON": "{}",
+                   "AGENT_SHUTTLE_TASK_REGISTRY": str(Path(folder) / "tickets.json")}
             params = StdioServerParameters(command=sys.executable, args=["-m", "agent_shuttle.mcp_server"], env=env)
             try:
                 async with stdio_client(params) as (reader, writer):

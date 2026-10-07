@@ -10,15 +10,15 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .client import BridgeClient, _TERMINAL_STATES
+from .client import ShuttleClient, _TERMINAL_STATES
 from .managed import HarnessConfigurationMismatch, HarnessLaunch, connect_harness
 from .runtime_context import require_coordinator
 
 
 class TaskGateway:
-    def __init__(self, registry_path: Path, *, client: BridgeClient | None = None):
+    def __init__(self, registry_path: Path, *, client: ShuttleClient | None = None):
         self.path = registry_path
-        self.client = client or BridgeClient()
+        self.client = client or ShuttleClient()
         self.stack = AsyncExitStack()
         self.lock = asyncio.Lock()
         self.jobs: dict = {}
