@@ -249,7 +249,7 @@ class AcpRuntime:
         try:
             initialized = await asyncio.wait_for(connection.initialize(
                 protocol_version=PROTOCOL_VERSION, client_capabilities=ClientCapabilities(),
-                client_info=Implementation(name="agent-shuttle", version="0.6.0"),
+                client_info=Implementation(name="agent-shuttle", version="0.7.0"),
             ), timeout=self.handshake_timeout_seconds)
             capabilities = getattr(initialized, "agent_capabilities", None)
             supports_resume = bool(getattr(capabilities, "load_session", False))
