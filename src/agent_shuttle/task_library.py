@@ -321,7 +321,7 @@ class TaskManager:
             if name == "CodexBackend":
                 policies = ("read_only", "workspace_write", "full_access")
             elif name == "AntigravityCliBackend":
-                policies = ("no_tools", "read_only", "workspace_write")
+                policies = ("no_tools", "read_only", "workspace_write", "web_research")
                 if getattr(backend, "dangerously_skip_permissions", False):
                     policies += ("full_access",)
             elif name == "ProfiledBackend":

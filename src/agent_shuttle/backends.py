@@ -705,6 +705,11 @@ class _AntigravityCliSession:
                 self._probe_usage_reported = True
             if not policy_probe:
                 if self.policy is not None:
+                    turn_details["tool_policy"] = self.policy.policy
+                    turn_details["tool_policy_audit"] = [
+                        {key: item.get(key) for key in ("tool", "decision", "code")}
+                        for item in self.policy.decisions()[audit_offset:]
+                    ]
                     denied = [item for item in self.policy.decisions()[audit_offset:]
                               if item.get("decision") == "deny"]
                     if denied:

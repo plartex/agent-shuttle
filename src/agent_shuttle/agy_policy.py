@@ -13,10 +13,12 @@ import shlex
 import sys
 import tempfile
 import uuid
+from urllib.parse import urlsplit
 from pathlib import Path
 
 
-SCOPED_POLICIES = {"no_tools", "read_only", "workspace_write"}
+SCOPED_POLICIES = {"no_tools", "read_only", "workspace_write", "web_research"}
+_WEB_TOOLS = {"search_web", "read_url_content", "view_content_chunk"}
 _READ_PATHS = {
     "view_file": "AbsolutePath", "list_dir": "DirectoryPath",
     "find_by_name": "SearchDirectory", "grep_search": "SearchPath",
@@ -41,6 +43,22 @@ def evaluate_tool_call(policy: str, workspace: Path, call: object, *, output_sch
         return {"decision": "allow", "reason": "Allowed structured result return.", "code": "structured_result"}
     if policy == "no_tools":
         return denied
+    if policy == "web_research":
+        if tool not in _WEB_TOOLS:
+            return denied
+        if tool == "read_url_content":
+            if not isinstance(args.get("Url"), str):
+                return denied
+            try:
+                url = urlsplit(args.get("Url", ""))
+                if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password:
+                    return denied
+            except (ValueError, TypeError):
+                return denied
+        if tool == "view_content_chunk" and not (isinstance(args.get("DocumentId"), str) and args["DocumentId"].strip()
+                and isinstance(args.get("Position"), int) and not isinstance(args["Position"], bool) and args["Position"] >= 0):
+            return denied
+        return {"decision": "allow", "reason": "Allowed native web research tool.", "code": "web_research"}
     key = _READ_PATHS.get(tool)
     writing = tool in _WRITE_TOOLS and policy == "workspace_write"
     if writing:
@@ -163,6 +181,8 @@ class ScopedAgyPolicy:
             f"The enforced tool policy is {self.policy}. "
             "Only native file reading/search is allowed for read_only; workspace_write "
             "also allows native file creation/replacement inside the project. "
+            "web_research allows only search_web, read_url_content for HTTP(S) URLs, "
+            "and view_content_chunk for retrieved web content; local file tools are blocked. "
             "Shell, MCP, subagents, permission changes, and external paths are blocked. "
             "For no_tools, respond using only the supplied context. " + structured + "\n\n" + prompt
         )
