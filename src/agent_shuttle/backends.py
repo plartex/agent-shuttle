@@ -67,8 +67,20 @@ def _retryable_agy_preflight_failure(stderr: bytes) -> bool:
 
 
 async def _read_agy_headless_output(process: asyncio.subprocess.Process) -> tuple[bytes, bytes]:
-    """Drain stdout and stderr and close stdin."""
-    return await process.communicate()
+    """Drain both outputs while keeping stdin open for the CLI's entire turn."""
+    stdin = getattr(process, "stdin", None)
+    if stdin is None:
+        return await process.communicate()
+    try:
+        stdout, stderr, _ = await asyncio.gather(
+            process.stdout.read(), process.stderr.read(), process.wait(),
+        )
+        return stdout, stderr
+    finally:
+        try:
+            stdin.close()
+        except OSError:
+            pass
 
 
 def _check_agy_denials(result: dict) -> None:
@@ -493,6 +505,7 @@ class AntigravityCliBackend:
         reasoning_effort: str | None = None, read_only: bool = False,
         tool_policy: str | None = None,
         output_schema: dict | None = None,
+        on_event=None,
     ) -> BackendSession:
         """Resume a native conversation after verifying a fresh scoped tool gate."""
         if not isinstance(native_id, str) or not native_id.strip():
@@ -502,7 +515,7 @@ class AntigravityCliBackend:
             raise ValueError("Antigravity resume requires a verified scoped tool policy")
         return await self._open_session(
             model, reasoning_effort=reasoning_effort, policy=policy, native_id=native_id,
-            output_schema=output_schema,
+            output_schema=output_schema, on_event=on_event,
         )
 
     _resume_scoped_session = resume_session

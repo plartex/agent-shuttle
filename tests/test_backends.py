@@ -121,10 +121,13 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder, patch(
             "agent_shuttle.backends.asyncio.create_subprocess_exec", side_effect=spawn,
         ):
-            session = await AntigravityCliBackend(Path(folder))._resume_scoped_session(
+            on_event = AsyncMock()
+            session = await AntigravityCliBackend(Path(folder)).resume_session(
                 native_id, "gemini-3.8-flash-high", reasoning_effort="high", tool_policy="read_only",
+                on_event=on_event,
             )
             try:
+                self.assertGreater(on_event.await_count, 0)
                 self.assertEqual(session.native_id, native_id)
                 result = await session.ask("inspect")
                 self.assertEqual(result.details["conversation_id"], native_id)
