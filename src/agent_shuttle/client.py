@@ -560,7 +560,7 @@ def _request_message(prompt, model, reasoning_effort, read_only, tool_policy, se
         try:
             ToolPolicy(tool_policy)
         except ValueError as exc:
-            raise ValueError("tool_policy must be no_tools, read_only, workspace_write, or full_access") from exc
+            raise ValueError("tool_policy must be no_tools, read_only, workspace_write, full_access, or web_research") from exc
         if read_only and tool_policy != ToolPolicy.READ_ONLY.value:
             raise ValueError("read_only conflicts with tool_policy")
     if workspace_mode not in {"shared", "isolated"}:

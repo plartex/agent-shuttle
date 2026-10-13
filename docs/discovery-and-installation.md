@@ -42,6 +42,16 @@ agent-shuttle-mcp --transport streamable-http --port 8769
 
 Provide a randomly generated `AGENT_SHUTTLE_MCP_TOKEN` of at least 32 characters in the process environment and send `Authorization: Bearer TOKEN` to `http://127.0.0.1:8769/mcp`. The server accepts only loopback Host and rejects browser Origin headers. Do not put transport secrets in committed configuration. This direct-client HTTP mode is independent of the Docker stdio adapter.
 
+## Web research and unrestricted tools
+
+For the built-in Antigravity harness, pass `tool_policy="web_research"` to `ask_agent` or `submit_task`. Only native `search_web`, HTTP(S) `read_url_content`, and `view_content_chunk` are allowed. Local file tools, shell, arbitrary MCP calls, and subagents remain blocked. This is tool gating, not a network or process sandbox. Antigravity `read_only` still permits local project file reading only. Other harnesses and profiles do not inherit this policy; inspect `get_agent_info`.
+
+MCP calls support explicit `tool_policy="full_access"` for Codex and built-in Antigravity. For Antigravity the manager starts a separate server with `--agy-dangerously-skip-permissions` instead of reusing a restricted peer. Ordinary agent info may omit `full_access` when that server flag is disabled. Unrestricted tools require explicit user authorization; the string parameter itself does not check consent. Never silently upgrade a restricted policy to `full_access`.
+
+Antigravity result details include `tool_policy` and `tool_policy_audit`, with tool names, decisions and codes, excluding query/page content and the pre-dispatch negative permission probe.
+
+Run `python tests/web_research_mcp_smoke.py REPORT.json` explicitly to verify real stdio MCP dispatch, native web search and page reading. This opt-in test uses existing Antigravity authentication and model quota, omits the model parameter, and uses a disposable workspace. It is not part of the offline test suite.
+
 ## Public MCP Registry release
 
 `server.json` describes `io.github.plartex/agent-shuttle`, a versioned PyPI package using stdio. Its resolved launch is `uvx agent-shuttle@VERSION mcp`. The repository README contains the matching ownership marker. Package and manifest versions must match.

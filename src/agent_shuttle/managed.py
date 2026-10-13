@@ -154,8 +154,10 @@ async def connect_harness(
     """Reuse a matching peer or supervise a temporary one for the context."""
     if launch.name not in _BACKENDS:
         raise ValueError(f"Unknown harness {launch.name!r}")
-    if launch.tool_policy not in {None, "no_tools", "read_only", "workspace_write", "full_access"}:
+    if launch.tool_policy not in {None, "no_tools", "read_only", "workspace_write", "full_access", "web_research"}:
         raise ValueError("Unknown temporary harness tool_policy")
+    if launch.tool_policy == "web_research" and launch.name != "antigravity":
+        raise ValueError("web_research is supported only by the built-in Antigravity harness")
     if not isinstance(launch.agy_dangerously_skip_permissions, bool):
         raise ValueError("agy_dangerously_skip_permissions must be a boolean")
     if launch.agy_dangerously_skip_permissions and launch.name != "antigravity":

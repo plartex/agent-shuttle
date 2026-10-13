@@ -99,9 +99,9 @@ class ShuttleProtocolTest(unittest.IsolatedAsyncioTestCase):
             })
             cases = (
                 (CodexBackend(root), ["read_only", "workspace_write", "full_access"], "workspace_write"),
-                (AntigravityCliBackend(root), ["no_tools", "read_only", "workspace_write"], None),
+                (AntigravityCliBackend(root), ["no_tools", "read_only", "workspace_write", "web_research"], None),
                 (AntigravityCliBackend(root, dangerously_skip_permissions=True),
-                 ["no_tools", "read_only", "workspace_write", "full_access"], "full_access"),
+                 ["no_tools", "read_only", "workspace_write", "web_research", "full_access"], "full_access"),
                 (ProfiledBackend(profile, object()), ["no_tools", "read_only"], "read_only"),
                 (ProfiledBackend(acp_profile, object()), [], "read_only"),
             )
