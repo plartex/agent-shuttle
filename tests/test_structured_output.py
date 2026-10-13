@@ -6,9 +6,7 @@ import tempfile
 import socket
 import unittest
 from pathlib import Path
-from unittest.mock import patch
-from unittest.mock import AsyncMock
-import httpx
+from unittest.mock import AsyncMock, patch
 import uvicorn
 
 from agent_shuttle.backends import AntigravityCliBackend, _AntigravityCliSession

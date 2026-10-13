@@ -1,7 +1,6 @@
 """Security boundary tests for the loopback A2A server."""
 
 import asyncio
-import json
 import os
 import tempfile
 import unittest
