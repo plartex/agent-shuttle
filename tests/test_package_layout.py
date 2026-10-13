@@ -11,7 +11,6 @@ class PackageLayoutTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.assertTrue((root / "src" / "agent_shuttle" / "__init__.py").is_file())
         self.assertFalse((root / "agent_shuttle").exists())
-        self.assertFalse((root / "agent_bridge").exists())
 
     def test_public_package_comes_from_src(self):
         root = Path(__file__).resolve().parents[1]

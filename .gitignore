@@ -3,6 +3,7 @@
 /.runtime/
 /.agent-shuttle/
 /build/
+/dist/
 /bin/
 /.agents/mcp_config.json
 /.codex/config.toml
@@ -14,4 +15,5 @@
 *.py[cod]
 .env
 .env.*
+*.shuttle-backup-*
 !.env.example

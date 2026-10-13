@@ -1,7 +1,6 @@
 """Lifecycle contracts for the reusable Shuttle server manager."""
 
 import json
-import os
 import subprocess
 import tempfile
 import unittest

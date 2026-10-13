@@ -8,9 +8,15 @@
 
 [Russian version / Русская версия](README.ru.md)
 
-Agent Shuttle gives Python applications one way to work with **Codex**, **Antigravity**, **OpenCode**, **Claude Code**, and configured **ACP agents**. It runs local agent tasks, preserves multi-turn sessions, and exposes the agents through [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) and [MCP](https://modelcontextprotocol.io/).
+Agent Shuttle is a **Python library and MCP server** for working with local **Antigravity**, **Codex**, **Claude Code**, **OpenCode**, and configured **ACP agents**. Delegate research, code reviews, implementation and second opinions using the harnesses' existing local authentication.
 
-It allows agents and external applications to delegate tasks to peer agents, reuse multi-turn conversations, query live model catalogs and account quotas, and report each runtime's tool permission guarantees—all on local loopback (`127.0.0.1`) without sharing cloud API keys.
+Use the Python API in your application, or connect the MCP server to your AI assistant. Both interfaces manage local agent tasks, multi-turn sessions, live model catalogs, account quotas and tool-policy guarantees. [A2A 1.0 JSON-RPC](https://a2a-protocol.org/latest/) is the peer protocol. Available research tools, including web access, depend on the selected harness and policy.
+
+- **Python:** `uv add agent-shuttle`; use `TaskManager`, `ShuttleClient`, or `connect_harness`.
+- **MCP:** `uv tool install agent-shuttle`; connect `agent-shuttle mcp` or `agent-shuttle-mcp`.
+- **Discovery and setup:** [connect, diagnose, use Docker Gateway, or prepare a registry release](docs/discovery-and-installation.md).
+
+<!-- mcp-name: io.github.plartex/agent-shuttle -->
 
 File editing tasks can use [isolated Git worktrees with explicit change application](docs/isolated-workspaces.md).
 
@@ -66,7 +72,7 @@ pip install C:\path\to\agent-shuttle
 # pip install -e C:\path\to\agent-shuttle
 ```
 
-Once installed, the CLI tools (`agent-shuttle`, `agent-shuttle-mcp`) and Python API (`agent_shuttle`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports. Version 0.7 uses Shuttle names throughout the Python API, environment, HTTP routes, and A2A metadata. See [the 0.7 upgrade guide](docs/upgrade-0.7.md) before restarting existing servers.
+Once installed, the CLI tools (`agent-shuttle`, `agent-shuttle-mcp`) and Python API (`agent_shuttle`) are fully accessible inside that virtual environment. The original checkout directory does not need to stay in place for runtime imports. Version 0.8 uses Shuttle names throughout the Python API, environment, HTTP routes, and A2A metadata. See [connection and release guidance](docs/discovery-and-installation.md) before restarting existing servers.
 
 The distribution has one Python package: `src/agent_shuttle/`. This is the standard `src` layout; there is no second implementation or compatibility package.
 

@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import os
-import inspect
 import math
 import uuid
 import json
 import hmac
 import re
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from time import monotonic
 from pathlib import Path
 
 from a2a.helpers import get_message_text, new_task_from_user_message, new_text_message, new_text_part
@@ -29,8 +26,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .backends import (
-    AntigravityCliBackend, AntigravitySdkBackend, Backend, BackendResponse,
-    BackendSession, CodexBackend,
+    AntigravityCliBackend, AntigravitySdkBackend, Backend, CodexBackend,
 )
 from .info import InfoProvider
 from .profiled import ProfiledBackend
@@ -38,8 +34,8 @@ from .profiles import ToolPolicy
 from .structured import encode_output_schema
 from .task_library import TaskManager
 from .runtime_context import NESTED_DISPATCH_ERROR, is_worker_context
+from .presentation import VERSION
 from .local_auth import LocalCredential
-from .metadata_migration import OLD_PREFIX
 
 
 class _LoopbackAuth:
@@ -75,102 +71,6 @@ class _LoopbackAuth:
         await response(scope, receive, send)
 
 
-@dataclass
-class _SessionRecord:
-    backend: BackendSession
-    settings: tuple[str | None, str | None, bool, str | None]
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    last_used: float = field(default_factory=monotonic)
-    closed: bool = False
-
-
-class SessionManager:
-    """Own backend conversations; one active turn at a time per session."""
-
-    def __init__(self, backend: Backend, idle_seconds: float = 1800):
-        self.backend = backend
-        self.idle_seconds = idle_seconds
-        self.sessions: dict[str, _SessionRecord] = {}
-        self.cancelled_sessions: set[str] = set()
-        self.lock = asyncio.Lock()
-
-    async def run(
-        self,
-        session_id: str,
-        prompt: str,
-        model: str | None,
-        reasoning_effort: str | None,
-        read_only: bool,
-        tool_policy: str | None = None,
-        on_event=None,
-    ) -> str | BackendResponse:
-        settings = (model, reasoning_effort, read_only, tool_policy)
-        async with self.lock:
-            if session_id in self.cancelled_sessions:
-                raise RuntimeError("Session was closed after cancellation; start a new session")
-            record = self.sessions.get(session_id)
-            if record is None:
-                kwargs = {"reasoning_effort": reasoning_effort, "read_only": read_only}
-                if tool_policy is not None:
-                    kwargs["tool_policy"] = tool_policy
-                session = await self.backend.open_session(model, **kwargs)
-                record = _SessionRecord(session, settings)
-                self.sessions[session_id] = record
-            elif record.settings != settings:
-                raise ValueError("Model, reasoning effort, and tool policy cannot change within a session")
-            record.last_used = monotonic()
-        async with record.lock:
-            if record.closed:
-                raise RuntimeError("Session was closed during a concurrent request")
-            record.last_used = monotonic()
-            try:
-                kwargs = {"on_event": on_event} if "on_event" in inspect.signature(record.backend.ask).parameters else {}
-                return await record.backend.ask(prompt, **kwargs)
-            except (asyncio.CancelledError, TimeoutError):
-                # The provider may have performed side effects before its turn
-                # was interrupted. Never continue that same native conversation.
-                record.closed = True
-                self.cancelled_sessions.add(session_id)
-                try:
-                    await record.backend.close()
-                finally:
-                    raise
-            finally:
-                record.last_used = monotonic()
-
-    async def close(self, session_id: str) -> bool:
-        async with self.lock:
-            record = self.sessions.pop(session_id, None)
-        if record is None:
-            return False
-        async with record.lock:
-            if not record.closed:
-                record.closed = True
-                await record.backend.close()
-        return True
-
-    async def reap_idle(self) -> None:
-        cutoff = monotonic() - self.idle_seconds
-        async with self.lock:
-            expired = [
-                (session_id, record) for session_id, record in self.sessions.items()
-                if record.last_used < cutoff and not record.lock.locked()
-            ]
-            for session_id, _ in expired:
-                self.sessions.pop(session_id)
-        for _, record in expired:
-            async with record.lock:
-                if not record.closed:
-                    record.closed = True
-                    await record.backend.close()
-
-    async def close_all(self) -> None:
-        async with self.lock:
-            session_ids = list(self.sessions)
-        for session_id in session_ids:
-            await self.close(session_id)
-
-
 class ShuttleExecutor(AgentExecutor):
     def __init__(self, task_manager: TaskManager, agent_id: str):
         self.task_manager = task_manager
@@ -187,10 +87,11 @@ class ShuttleExecutor(AgentExecutor):
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue, task.id, task.context_id)
-        if any(key.startswith(OLD_PREFIX) for key in context.message.metadata):
+        if any(key.startswith("agent_") and not key.startswith("agent_shuttle.")
+               for key in context.message.metadata):
             await updater.update_status(
                 TaskState.TASK_STATE_REJECTED,
-                new_text_message("Legacy A2A metadata keys are unsupported; use agent_shuttle.*"),
+                new_text_message("Unsupported agent metadata namespace; use agent_shuttle.*"),
             )
             return
         if not prompt:
@@ -419,13 +320,14 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         id=f"run_{name}",
         name=f"Run {name} task",
         description=(
-            f"Delegate a coding task to the local {name} agent and return its result. "
+            f"Delegate research, code review, implementation or a second opinion to the local {name} agent and return its result. "
+            "Available research tools depend on the agent and its enforceable policy. "
             "Optional message metadata agent_shuttle.model and agent_shuttle.reasoning_effort "
             "select the backend model and reasoning effort."
         ),
         input_modes=["text/plain"],
         output_modes=["text/plain"],
-        tags=["coding", "delegation", name],
+        tags=["coding", "delegation", "research", "review", "implementation", "second-opinion", name],
     )
     card = AgentCard(
         name=f"{name.title()} local agent",
@@ -433,7 +335,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             f"Local {name} agent exposed through A2A by Agent Shuttle. "
             "Live models, reasoning efforts and account quotas are available at /shuttle/info."
         ),
-        version="0.1.0",
+        version=VERSION,
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         capabilities=AgentCapabilities(streaming=True, push_notifications=False),

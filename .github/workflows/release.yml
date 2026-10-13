@@ -51,6 +51,10 @@ jobs:
         with:
           name: python-distributions
           path: dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcp-registry-manifest
+          path: server.json
 
   package-install:
     needs: build

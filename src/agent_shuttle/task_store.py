@@ -10,20 +10,19 @@ import os
 from pathlib import Path
 from typing import Any
 
-from google.protobuf.message import DecodeError
 
 from a2a.helpers import new_text_message
 from a2a.server.context import ServerCallContext
 from a2a.server.owner_resolver import OwnerResolver, resolve_user_scope
 from a2a.server.tasks.task_store import TaskStore
 from a2a.types import a2a_pb2
-from a2a.types.a2a_pb2 import SendMessageRequest, Task, TaskState
+from a2a.types.a2a_pb2 import Task, TaskState
 from a2a.utils.constants import DEFAULT_LIST_TASKS_PAGE_SIZE
 from a2a.utils.errors import InvalidParamsError
 from a2a.utils.task import decode_page_token, encode_page_token
 
 from .runtime_context import is_worker_context, nested_data_path
-from .metadata_migration import backup_database, rename_protobuf_metadata
+from .database_backup import backup_database
 
 log = logging.getLogger(__name__)
 
@@ -153,30 +152,6 @@ class SQLiteTaskStore(TaskStore):
                 version = 2
             if version == 2:
                 conn.execute("BEGIN IMMEDIATE")
-                for owner, task_id, raw in conn.execute(
-                    "SELECT owner, task_id, task_data FROM tasks"
-                ).fetchall():
-                    task = Task()
-                    task.ParseFromString(raw)
-                    if rename_protobuf_metadata(task):
-                        conn.execute(
-                            "UPDATE tasks SET task_data=? WHERE owner=? AND task_id=?",
-                            (task.SerializeToString(), owner, task_id),
-                        )
-                for owner, request_id, raw in conn.execute(
-                    "SELECT owner, request_id, fingerprint FROM request_bindings"
-                ).fetchall():
-                    request = SendMessageRequest()
-                    try:
-                        request.ParseFromString(raw)
-                    except DecodeError:
-                        # Direct callers may have stored opaque fingerprints.
-                        continue
-                    if rename_protobuf_metadata(request):
-                        conn.execute(
-                            "UPDATE request_bindings SET fingerprint=? WHERE owner=? AND request_id=?",
-                            (request.SerializeToString(deterministic=True), owner, request_id),
-                        )
                 conn.execute("PRAGMA user_version = 3")
                 conn.commit()
 
