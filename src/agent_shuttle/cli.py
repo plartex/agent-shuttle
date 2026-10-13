@@ -30,8 +30,13 @@ def _run_server(app, port: int) -> None:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "mcp":
+        from .mcp_cli import main as mcp_main
+        mcp_main(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser(prog="agent-shuttle")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("mcp", help="Start MCP, preview/apply connection setup, diagnose, or compose with Docker Gateway")
     serve = sub.add_parser("serve", help="Expose a local agent profile through A2A")
     serve.add_argument("agent", choices=["codex", "antigravity", "profile"])
     serve.add_argument("--profile", type=Path, help="JSON profile for OpenCode, Claude Code or ACP")

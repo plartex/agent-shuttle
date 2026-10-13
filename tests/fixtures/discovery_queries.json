@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "positive-01",
+      "language": "ru",
+      "query": "Передай исследование Antigravity.",
+      "delegation_intent": true,
+      "agent_id": "antigravity",
+      "model": null
+    },
+    {
+      "id": "positive-02",
+      "language": "en",
+      "query": "Ask Codex to review this repository.",
+      "delegation_intent": true,
+      "agent_id": "codex",
+      "model": null
+    },
+    {
+      "id": "positive-03",
+      "language": "ru",
+      "query": "Поручи Claude Code исправить ошибку.",
+      "delegation_intent": true,
+      "agent_id": "claude_code",
+      "model": null
+    },
+    {
+      "id": "positive-04",
+      "language": "en",
+      "query": "Delegate implementation to OpenCode.",
+      "delegation_intent": true,
+      "agent_id": "opencode",
+      "model": null
+    },
+    {
+      "id": "positive-05",
+      "language": "ru",
+      "query": "Получи второе мнение другого агента о приложенной архитектуре.",
+      "delegation_intent": true,
+      "agent_id": null,
+      "model": null
+    },
+    {
+      "id": "positive-06",
+      "language": "en",
+      "query": "Have another AI agent independently review this proposal.",
+      "delegation_intent": true,
+      "agent_id": null,
+      "model": null
+    },
+    {
+      "id": "positive-07",
+      "language": "ru",
+      "query": "Попроси Antigravity исследовать переданные документы с Gemini 3.8 High; сначала уточни точный ID модели.",
+      "delegation_intent": true,
+      "agent_id": "antigravity",
+      "model": "Gemini 3.8 High"
+    },
+    {
+      "id": "positive-08",
+      "language": "en",
+      "query": "Ask Codex using model gpt-6-astra to inspect these files.",
+      "delegation_intent": true,
+      "agent_id": "codex",
+      "model": "gpt-6-astra"
+    },
+    {
+      "id": "positive-09",
+      "language": "ru",
+      "query": "Делегируй ревью кода OpenCode.",
+      "delegation_intent": true,
+      "agent_id": "opencode",
+      "model": null
+    },
+    {
+      "id": "positive-10",
+      "language": "en",
+      "query": "Get a second opinion from Claude Code.",
+      "delegation_intent": true,
+      "agent_id": "claude_code",
+      "model": null
+    },
+    {
+      "id": "positive-11",
+      "language": "ru",
+      "query": "Передай эту задачу настроенному ACP-агенту по имени auditor.",
+      "delegation_intent": true,
+      "agent_id": "auditor",
+      "model": null
+    },
+    {
+      "id": "positive-12",
+      "language": "en",
+      "query": "Delegate this research to the configured agent auditor.",
+      "delegation_intent": true,
+      "agent_id": "auditor",
+      "model": null
+    },
+    {
+      "id": "positive-13",
+      "language": "ru",
+      "query": "Каких локальных агентов можно привлечь к независимой проверке?",
+      "delegation_intent": true,
+      "agent_id": null,
+      "model": null
+    },
+    {
+      "id": "positive-14",
+      "language": "en",
+      "query": "Find a tool to delegate research and retrieve the result.",
+      "delegation_intent": true,
+      "agent_id": null,
+      "model": null
+    },
+    {
+      "id": "positive-15",
+      "language": "ru",
+      "query": "Поручи Codex длительный рефакторинг и отслеживай результат.",
+      "delegation_intent": true,
+      "agent_id": "codex",
+      "model": null
+    },
+    {
+      "id": "positive-16",
+      "language": "en",
+      "query": "Have Antigravity audit the supplied files and return its findings.",
+      "delegation_intent": true,
+      "agent_id": "antigravity",
+      "model": null
+    },
+    {
+      "id": "negative-01",
+      "language": "ru",
+      "query": "Что означает термин MCP?",
+      "delegation_intent": false
+    },
+    {
+      "id": "negative-02",
+      "language": "en",
+      "query": "Explain what agent delegation means.",
+      "delegation_intent": false
+    },
+    {
+      "id": "negative-03",
+      "language": "ru",
+      "query": "Сравни подходы к ревью кода.",
+      "delegation_intent": false
+    },
+    {
+      "id": "negative-04",
+      "language": "en",
+      "query": "What is Antigravity?",
+      "delegation_intent": false
+    },
+    {
+      "id": "negative-05",
+      "language": "ru",
+      "query": "Какую модель выбрать для исследования?",
+      "delegation_intent": false
+    },
+    {
+      "id": "negative-06",
+      "language": "en",
+      "query": "Suggest ways to get a second opinion.",
+      "delegation_intent": false
+    },
+    {
+      "id": "negative-07",
+      "language": "ru",
+      "query": "Объясни разницу между Python API и MCP.",
+      "delegation_intent": false
+    },
+    {
+      "id": "negative-08",
+      "language": "en",
+      "query": "Summarize the attached paragraph yourself.",
+      "delegation_intent": false
+    }
+  ]
+}

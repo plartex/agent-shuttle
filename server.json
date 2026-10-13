@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.plartex/agent-shuttle",
+  "title": "Agent Shuttle — Python library and MCP server for delegation",
+  "description": "Delegate research, reviews, edits and second opinions to Antigravity, Codex, Claude Code, OpenCode.",
+  "version": "0.8.0",
+  "repository": {"url": "https://github.com/Plartex/agent-shuttle", "source": "github"},
+  "websiteUrl": "https://github.com/Plartex/agent-shuttle",
+  "packages": [{
+    "registryType": "pypi",
+    "registryBaseUrl": "https://pypi.org",
+    "identifier": "agent-shuttle",
+    "version": "0.8.0",
+    "runtimeHint": "uvx",
+    "packageArguments": [{"type": "positional", "value": "mcp"}],
+    "transport": {"type": "stdio"},
+    "environmentVariables": [{"name": "AGENT_SHUTTLE_WORKSPACE", "description": "Existing absolute project directory on this host", "format": "filepath", "isRequired": true}]
+  }],
+  "_meta": {"io.modelcontextprotocol.registry/publisher-provided": {
+    "interfaces": ["python-library", "mcp", "a2a"],
+    "agents": ["Antigravity", "Codex", "Claude Code", "OpenCode", "configured ACP agents"],
+    "useCases": ["delegate", "research", "review", "implementation", "second opinion", "делегирование", "исследование", "ревью", "реализация", "второе мнение"]
+  }}
+}

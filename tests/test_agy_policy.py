@@ -56,7 +56,7 @@ class ScopedAgyPolicyTests(unittest.TestCase):
     def test_default_deny_covers_writes_commands_mcp_and_subagents(self):
         for policy in ("no_tools", "read_only"):
             for tool in ("write_to_file", "replace_file_content", "run_command",
-                         "mcp_agent_bridge_ask_codex", "invoke_subagent", "ask_permission", "unknown"):
+                         "mcp_agent_shuttle_ask_codex", "invoke_subagent", "ask_permission", "unknown"):
                 with self.subTest(policy=policy, tool=tool):
                     self.assertEqual(self.decision(policy, tool, TargetFile=str(self.file)), "deny")
         self.assertEqual(self.decision("no_tools", "view_file", AbsolutePath=str(self.file)), "deny")

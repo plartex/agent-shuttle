@@ -21,7 +21,9 @@ def is_worker_context(env: Mapping[str, str] | None = None) -> bool:
 
 def worker_env(env: Mapping[str, str]) -> dict[str, str]:
     """Mark a real worker after all user supplied environment changes."""
-    return {**env, WORKER_CONTEXT_ENV: WORKER_CONTEXT_VALUE}
+    clean = {key: value for key, value in env.items()
+             if key not in {"AGENT_SHUTTLE_MCP_TOKEN", "AGENT_SHUTTLE_GATEWAY_SECRET_FILE"}}
+    return {**clean, WORKER_CONTEXT_ENV: WORKER_CONTEXT_VALUE}
 
 
 def require_coordinator(worker: bool | None = None) -> None:

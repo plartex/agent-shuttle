@@ -11,6 +11,7 @@ import httpx
 
 from agent_shuttle.a2a_server import make_app
 from agent_shuttle.client import ShuttleClient
+from agent_shuttle.presentation import VERSION
 from agent_shuttle.local_auth import (LocalCredential, PeerAuthenticationError, _windows_acl,
                                       read_local_credential)
 
@@ -23,6 +24,8 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url=credential.origin) as client:
             card = await asyncio.wait_for(client.get("/.well-known/agent-card.json"), timeout=3)
             self.assertEqual(card.status_code, 200)
+            self.assertEqual(card.json()["version"], VERSION)
+            self.assertIn("research", card.json()["skills"][0]["tags"])
             self.assertIn("agentShuttleBearer", card.json()["securitySchemes"])
             self.assertNotIn("workspace", card.text)
             self.assertEqual((await client.get("/shuttle/identity")).status_code, 401)
@@ -31,7 +34,7 @@ class LocalAuthTests(unittest.IsolatedAsyncioTestCase):
                 "Authorization": "Bearer wrong"})).status_code, 401)
             valid = {"Authorization": "Bearer " + credential.token}
             self.assertEqual((await client.get("/shuttle/identity", headers=valid)).status_code, 200)
-            self.assertEqual((await client.get("/bridge/identity", headers=valid)).status_code, 404)
+            self.assertEqual((await client.get("/unknown/identity", headers=valid)).status_code, 404)
             self.assertEqual((await client.get("/shuttle/identity", headers={
                 **valid, "Origin": "null"})).status_code, 403)
             self.assertEqual((await client.get("/shuttle/identity", headers={

@@ -15,4 +15,5 @@
 *.py[cod]
 .env
 .env.*
+*.shuttle-backup-*
 !.env.example

@@ -1,5 +1,7 @@
 # Начало работы с Agent Shuttle
 
+Agent Shuttle is both a Python library and MCP server. Both interfaces are supported equally; A2A is the peer protocol. See [discovery and connection setup](../discovery-and-installation.md).
+
 [English version / Английская версия](../getting-started.md)
 
 Это руководство описывает процесс первоначальной настройки Agent Shuttle, проверку доступности локальных агентных сред (харнессов), запуск A2A- и MCP-серверов, а также отправку первых задач через Python, CLI и MCP.
