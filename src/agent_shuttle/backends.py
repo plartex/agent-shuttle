@@ -500,11 +500,12 @@ class AntigravityCliBackend:
         return await self._open_session(model, reasoning_effort=reasoning_effort, policy=policy,
                                         output_schema=output_schema, on_event=on_event)
 
-    async def _resume_scoped_session(
+    async def resume_session(
         self, native_id: str, model: str | None = None, *,
         reasoning_effort: str | None = None, read_only: bool = False,
         tool_policy: str | None = None,
         output_schema: dict | None = None,
+        on_event=None,
     ) -> BackendSession:
         """Resume a native conversation after verifying a fresh scoped tool gate."""
         if not isinstance(native_id, str) or not native_id.strip():
@@ -514,8 +515,10 @@ class AntigravityCliBackend:
             raise ValueError("Antigravity resume requires a verified scoped tool policy")
         return await self._open_session(
             model, reasoning_effort=reasoning_effort, policy=policy, native_id=native_id,
-            output_schema=output_schema,
+            output_schema=output_schema, on_event=on_event,
         )
+
+    _resume_scoped_session = resume_session
 
     async def _open_session(
         self, model: str | None, *, reasoning_effort: str | None,
@@ -763,7 +766,7 @@ class _AntigravityCliSession:
 
 
 def default_agy_python() -> Path:
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[2]
     folder = "Scripts" if os.name == "nt" else "bin"
     name = "python.exe" if os.name == "nt" else "python"
     return root / ".venv-agy" / folder / name

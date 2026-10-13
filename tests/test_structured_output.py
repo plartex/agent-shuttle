@@ -6,9 +6,7 @@ import tempfile
 import socket
 import unittest
 from pathlib import Path
-from unittest.mock import patch
-from unittest.mock import AsyncMock
-import httpx
+from unittest.mock import AsyncMock, patch
 import uvicorn
 
 from agent_shuttle.backends import AntigravityCliBackend, _AntigravityCliSession
@@ -197,7 +195,7 @@ class StructuredOutputTests(unittest.IsolatedAsyncioTestCase):
                 opened.append(native)
                 return native
 
-        async with TaskManager({"test": Backend()}, workspace=Path.cwd()) as manager:
+        async with TaskManager({"test": Backend()}, workspace=Path.cwd(), memory=True) as manager:
             session = await manager.create_session("test")
             first = await session.dispatch("read")
             self.assertEqual((await first.result()).state, "failed")
@@ -221,7 +219,7 @@ class StructuredOutputTests(unittest.IsolatedAsyncioTestCase):
                 schemas.append(output_schema)
                 return Session()
 
-        async with TaskManager({"test": Backend()}, workspace=Path.cwd()) as manager:
+        async with TaskManager({"test": Backend()}, workspace=Path.cwd(), memory=True) as manager:
             session = await manager.create_session("test", output_schema=SCHEMA)
             task = await session.dispatch("answer")
             self.assertEqual((await task.result()).state, "completed")
@@ -235,7 +233,7 @@ class StructuredOutputTests(unittest.IsolatedAsyncioTestCase):
             async def run(self, prompt, model=None, *, reasoning_effort=None, read_only=False):
                 raise AssertionError("unsupported request reached worker")
 
-        async with TaskManager({"test": Backend()}, workspace=Path.cwd()) as manager:
+        async with TaskManager({"test": Backend()}, workspace=Path.cwd(), memory=True) as manager:
             with self.assertRaisesRegex(ValueError, "structured output"):
                 await manager.dispatch("test", "answer", output_schema=SCHEMA)
 

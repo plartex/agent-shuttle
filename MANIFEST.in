@@ -1,0 +1,5 @@
+include server.json
+include tests/evaluate_discovery.py
+include tests/package_install_smoke.py
+include tests/verify_distributions.py
+recursive-include tests/fixtures *.json

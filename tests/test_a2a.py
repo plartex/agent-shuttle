@@ -257,6 +257,7 @@ class ShuttleProtocolTest(unittest.IsolatedAsyncioTestCase):
                 try:
                     examples = [
                         ("", {}),
+                        ("hello", {"agent_other.tool_policy": "read_only"}),
                         ("hello", {"agent_shuttle.model": ""}),
                         ("hello", {"agent_shuttle.reasoning_effort": 1}),
                         ("hello", {"agent_shuttle.read_only": "yes"}),
@@ -265,7 +266,6 @@ class ShuttleProtocolTest(unittest.IsolatedAsyncioTestCase):
                                    "agent_shuttle.tool_policy": "workspace_write"}),
                         ("hello", {"agent_shuttle.session_id": "not-a-uuid"}),
                         ("hello", {"agent_shuttle.session_id": str(uuid.uuid4())}),
-                        ("hello", {"agent_bridge.model": "obsolete"}),
                     ]
                     for prompt, metadata in examples:
                         with self.subTest(metadata=metadata):

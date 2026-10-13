@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from pathlib import Path
 
 from agent_shuttle.profiled import ProfiledBackend, ProfiledInfo
 from agent_shuttle.profiles import AgentProfile, ToolPolicy
