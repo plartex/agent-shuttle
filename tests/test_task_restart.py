@@ -37,11 +37,14 @@ class TaskRestartTests(unittest.IsolatedAsyncioTestCase):
                         await running
                     await asyncio.sleep(0.01)
                 try:
-                    client = ShuttleClient(timeout_seconds=2)
+                    # This verifies restart durability, not a two-second latency
+                    # target. Loaded Windows CI runners can pause the loop for
+                    # several seconds while SQLite and server startup complete.
+                    client = ShuttleClient(timeout_seconds=30)
                     handle = await client.submit(url, "once", request_id=request_id)
                     if index == 0:
                         saved_id = handle.task_id
-                        self.assertEqual((await handle.wait(2)).state, "TASK_STATE_COMPLETED")
+                        self.assertEqual((await handle.wait(30)).state, "TASK_STATE_COMPLETED")
                         saved_events = await handle.events_page()
                         self.assertEqual(saved_events["items"][-1]["kind"], "completed")
                     else:
