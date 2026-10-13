@@ -1,6 +1,6 @@
 """Shared public identity for the Python library and MCP server."""
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 REGISTRY_NAME = "io.github.plartex/agent-shuttle"
 TITLE = "Agent Shuttle"
 SUMMARY = "Python library and MCP server for delegating tasks to local AI agents"
