@@ -8,8 +8,8 @@ those stalls.
 
 ## Evidence
 
-- The first A2A smoke stopped before sending a task. Its temporary Bridge
-  server started, but `connect_harness()` awaited `/bridge/capabilities`.
+- The first A2A smoke stopped before sending a task. Its temporary Shuttle
+  server started, but `connect_harness()` awaited `/shuttle/capabilities`.
   That endpoint launched three concurrent `agy` processes (`models`, `/model`,
   `/effort`) even though connection verification needed only backend,
   workspace, and permission mode. The log showed overlapping authentication
@@ -22,7 +22,7 @@ those stalls.
   original one-shot adapter had no CLI deadline. The exact upstream stall
   after authentication remains unconfirmed.
 - A later direct CLI stream showed `permission_mode: always-proceed`, a
-  completed `run_command` step, and a matching marker. A later Bridge A2A run
+  completed `run_command` step, and a matching marker. A later Shuttle A2A run
   also completed. Thus full-access permission itself was not the cause of the
   stalls.
 
@@ -31,20 +31,20 @@ those stalls.
 Regression tests first reproduced the static-readiness endpoint missing, the
 parallel metadata invocations (including two concurrent HTTP callers), and the
 unbounded child-process wait. The
-repair adds `/bridge/identity` for static verification, uses it from
+repair adds `/shuttle/identity` for static verification, uses it from
 `connect_harness()`, serializes metadata commands with a per-process 45-second
 deadline, and gives one-shot `agy` an explicit, configurable 300-second turn
 deadline. A timed-out child is killed and the caller gets `TimeoutError`.
 The checker uses persistent stream sessions, so a separate regression test
 also verifies that a session turn stalled after input is killed at its
-30-minute Bridge deadline, rather than relying only on `agy --print-timeout`.
-Existing servers without `/bridge/identity` must be restarted with the new
-Bridge version rather than silently reused.
+30-minute Shuttle deadline, rather than relying only on `agy --print-timeout`.
+Existing servers without `/shuttle/identity` must be restarted with the new
+Shuttle version rather than silently reused.
 
 ## Verification
 
 - Offline suite: 129 tests passed, 5 opt-in live tests skipped.
-- Live A2A full-access smoke after repair: temporary Bridge startup took
+- Live A2A full-access smoke after repair: temporary Shuttle startup took
   **2.578 seconds**; task finished `TASK_STATE_COMPLETED`; marker matched;
   usage was 28,154 total tokens. The run is under
   `.runtime/agy-full-access-9f46c674b0f3/`.

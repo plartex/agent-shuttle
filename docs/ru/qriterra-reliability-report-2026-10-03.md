@@ -158,4 +158,4 @@ Qriterra получила ответы по **всем 80 правилам** Cod
 
 ## Воспроизведение и артефакты
 
-Полный JSON: `C:\Users\kkaas\OneDrive\Документы\ChatGPT\Пиринговая сеть агентов\agent-bridge\.runtime\qriterra-verified-2026-10-03\report.verified.json`. Сохранённые запросы, ответы, native ID и диагностические данные находятся в `C:\Users\kkaas\OneDrive\Документы\ChatGPT\Пиринговая сеть агентов\agent-bridge\.runtime\qriterra-verified-2026-10-03`. Скрипт `.runtime/revalidate_qriterra.py` восстанавливает отчёт из сохранённых ответов без новых модельных вызовов; `.runtime/verify_current_evidence.py` проверяет цитаты на текущих файлах.
+Полный JSON: `C:\Users\kkaas\OneDrive\Документы\ChatGPT\Пиринговая сеть агентов\agent-shuttle\.runtime\qriterra-verified-2026-10-03\report.verified.json`. Сохранённые запросы, ответы, native ID и диагностические данные находятся в `C:\Users\kkaas\OneDrive\Документы\ChatGPT\Пиринговая сеть агентов\agent-shuttle\.runtime\qriterra-verified-2026-10-03`. Скрипт `.runtime/revalidate_qriterra.py` восстанавливает отчёт из сохранённых ответов без новых модельных вызовов; `.runtime/verify_current_evidence.py` проверяет цитаты на текущих файлах.

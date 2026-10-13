@@ -13,6 +13,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+from typing import Annotated
+
+from pydantic import Field
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ResourceLink, TextContent
@@ -21,6 +24,15 @@ from .client import ShuttleClient
 from .managed import HarnessConfigurationMismatch, HarnessLaunch, connect_harness
 from .mcp_tasks import TaskGateway
 from .runtime_context import is_worker_context, nested_data_path, require_coordinator
+from .presentation import DELEGATION_DESCRIPTION, VERSION
+from .agent_catalog import inventory
+
+AgentId = Annotated[str, Field(description="Target: codex, antigravity, opencode, claude_code, or a configured agent_id from list_agents.")]
+Prompt = Annotated[str, Field(description="Complete delegated task, supplied context, constraints and requested output.")]
+Model = Annotated[str | None, Field(description="Exact remote model ID explicitly requested by the user; otherwise omit. Inspect get_agent_info for live models.")]
+Effort = Annotated[str | None, Field(description="User-requested remote reasoning effort; otherwise omit. Inspect supported values using get_agent_info.")]
+Policy = Annotated[str | None, Field(description="Least sufficient supported policy: no_tools, read_only, workspace_write or full_access. Inspect enforceability using get_agent_info first.")]
+Workspace = Annotated[str | None, Field(description="Existing absolute directory on the local host for the delegated task; otherwise use the server's configured workspace.")]
 
 
 _task_gateway: TaskGateway | None = None
@@ -58,6 +70,16 @@ mcp = FastMCP(
     "Agent Shuttle",
     lifespan=_lifespan,
     instructions=(
+        "Agent Shuttle is a Python library and MCP server for delegating research, reviews, "
+        "implementation and second opinions to local AI agents. "
+        "Use delegation tools for an actual request to have another agent perform work. "
+        "Answer general explanations and advice directly. Inspect installed agents when the user "
+        "asks to discover available local agents or as a step in authorized delegation. "
+        "Делегирование: исследование, ревью, реализация, второе мнение. Use list_agents to discover Antigravity, Codex, "
+        "Claude Code, OpenCode and configured ACP agents. Then get_agent_info for live "
+        "capabilities and models; ask_agent for short tasks or submit_task for long work. "
+        "Command discovery does not verify authentication. Web research depends on the "
+        "selected agent's actual tools and policy. "
         "Handle delegation setup yourself; users need not choose access policies. Use read_only "
         "for reviews/research, workspace_write for requested file edits, and no_tools for supplied-context "
         "generation when supported. Full_access requires authorization for unrestricted tools. "
@@ -84,6 +106,8 @@ mcp = FastMCP(
         "Return the remote result to the user."
     ),
 )
+
+mcp._mcp_server.version = VERSION
 
 
 def _free_local_url() -> str:
@@ -203,14 +227,14 @@ async def _managed_ask(launch: HarnessLaunch, prompt: str,
         return await use(replace(launch, url=_free_local_url()))
 
 
-@mcp.tool()
+@mcp.tool(description=DELEGATION_DESCRIPTION)
 async def ask_agent(
-    agent_id: str,
-    prompt: str,
-    model: str | None = None,
-    reasoning_effort: str | None = None,
-    tool_policy: str | None = None,
-    workspace: str | None = None,
+    agent_id: AgentId,
+    prompt: Prompt,
+    model: Model = None,
+    reasoning_effort: Effort = None,
+    tool_policy: Policy = None,
+    workspace: Workspace = None,
 ) -> dict:
     """Delegate; choose read_only for inspection or workspace_write for requested edits."""
     require_coordinator()
@@ -230,8 +254,12 @@ async def ask_agent(
 
 
 @mcp.tool()
-async def get_agent_info(agent_id: str, workspace: str | None = None) -> dict:
-    """Read agent capabilities, launching its A2A server when absent."""
+async def get_agent_info(agent_id: AgentId, workspace: Workspace = None) -> dict:
+    """Inspect live models, account quota and enforceable tool policies for Antigravity,
+    Codex, Claude Code, OpenCode or a configured ACP agent before delegating research,
+    review, implementation or a second opinion. Manages the local server automatically.
+    This checks live metadata without a model turn; use list_agents for offline inventory.
+    """
     legacy_url = _legacy_custom_url(agent_id)
     if legacy_url:
         return await ShuttleClient().info(legacy_url)
@@ -272,11 +300,11 @@ async def ask_codex(
     return await _managed_ask(launch, prompt, model, reasoning_effort, tool_policy)
 
 
-@mcp.tool()
-async def submit_task(agent_id: str, prompt: str, model: str | None = None,
-                      reasoning_effort: str | None = None, tool_policy: str | None = None,
-                      workspace: str | None = None, request_id: str | None = None,
-                      workspace_mode: str = "shared") -> dict:
+@mcp.tool(description=DELEGATION_DESCRIPTION + " Returns a task ticket immediately; use check_task/wait_task, then get_result. Reuse request_id when retrying submission.")
+async def submit_task(agent_id: AgentId, prompt: Prompt, model: Model = None,
+                      reasoning_effort: Effort = None, tool_policy: Policy = None,
+                      workspace: Workspace = None, request_id: Annotated[str | None, Field(description="Stable UUID used to deduplicate submission retries.")] = None,
+                      workspace_mode: Annotated[str, Field(description="shared uses the supplied workspace; isolated creates a detached Git worktree for supported edit tasks. Inspect workspace_modes via get_agent_info and review changes before apply_task_changes.")] = "shared") -> dict:
     """Start work and return a task ticket immediately; choose the least sufficient tool policy.
 
     The managed peer remains alive between calls. Reuse request_id for submission retries.
@@ -378,6 +406,20 @@ async def get_event_page(task_id: str, seq: int, cursor: int = 0, limit: int = 6
 
 
 @mcp.tool()
+async def list_agents() -> dict:
+    """Discover local Antigravity, Codex, Claude Code, OpenCode and configured ACP agents
+    for delegation, research, code review, implementation and second opinions.
+    Lists agent_id, command availability and configuration errors without starting
+    agent processes, contacting models or verifying authentication. Use get_agent_info
+    for live readiness, models and tool policies. Поиск агентов для делегирования задач.
+    Use when asked to discover actual available local agents or while preparing authorized
+    delegation. General explanations and advice about agents or second opinions do not
+    require an inventory of the user's installed agents.
+    """
+    return inventory()
+
+
+@mcp.tool()
 async def get_antigravity_info(workspace: str | None = None) -> dict:
     """Read Antigravity's current models, effort options and account quota without an agent turn."""
     async with connect_harness(_agent_launch("antigravity", workspace)) as peer:
@@ -391,8 +433,9 @@ async def get_codex_info(workspace: str | None = None) -> dict:
         return await ShuttleClient().info(peer.url)
 
 
-def main() -> None:
-    mcp.run(transport="stdio")
+def main(argv=None) -> None:
+    from .mcp_transport import run_server
+    run_server(mcp, argv)
 
 
 if __name__ == "__main__":

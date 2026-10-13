@@ -18,14 +18,21 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 async def probe():
-    server = StdioServerParameters(command=sys.argv[1])
+    server = StdioServerParameters(command=sys.argv[1], args=sys.argv[2:])
     async with stdio_client(server) as (reader, writer):
         async with ClientSession(reader, writer) as session:
-            await session.initialize()
-            names = {tool.name for tool in (await session.list_tools()).tools}
-            required = {"ask_agent", "get_agent_info"}
+            initialized = await session.initialize()
+            assert initialized.serverInfo.name == "Agent Shuttle"
+            tools = (await session.list_tools()).tools
+            names = {tool.name for tool in tools}
+            required = {"ask_agent", "get_agent_info", "submit_task", "list_agents"}
             if not required.issubset(names):
                 raise AssertionError(f"Missing MCP tools: {required - names}")
+            tool = next(item for item in tools if item.name == "ask_agent")
+            assert "Antigravity" in tool.description and "research" in tool.description
+            assert tool.inputSchema["properties"]["agent_id"]["description"]
+            result = await session.call_tool("list_agents", {})
+            assert not result.isError
 
 asyncio.run(asyncio.wait_for(probe(), timeout=30))
 """
@@ -76,6 +83,14 @@ def main() -> None:
             raise AssertionError("uv tool environment was not created")
         run(str(tool_python), "-c", MCP_PROBE, str(mcp), cwd=root, env=env,
             timeout=60)
+        run(str(tool_python), "-c", MCP_PROBE, str(shuttle), "mcp", cwd=root, env=env,
+            timeout=60)
+
+        manifest_path = Path(__file__).resolve().parents[1] / "server.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        package = manifest["packages"][0]
+        assert package["identifier"] == "agent-shuttle"
+        assert package["packageArguments"] == [{"type": "positional", "value": "mcp"}]
 
         library_env = root / "library"
         run(uv, "venv", "--python", version, str(library_env), cwd=root, env=env)

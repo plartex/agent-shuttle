@@ -53,74 +53,6 @@ def _create_task(
 
 
 class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
-    async def test_v2_migration_preserves_tasks_and_retry_fingerprint(self) -> None:
-        SQLiteTaskStore(self.db_path)
-        task = _create_task("historic", state=TaskState.TASK_STATE_COMPLETED,
-                            status_text="agent_bridge.error is user text")
-        task.metadata["agent_bridge.error"] = {"code": "old"}
-        task.history.append(new_text_message("previous turn"))
-        task.history[0].metadata["agent_bridge.event"] = "progress"
-        pending = _create_task("interrupted", state=TaskState.TASK_STATE_WORKING)
-        pending.metadata["agent_bridge.event"] = "started"
-        request = SendMessageRequest(message=new_text_message("run"))
-        request.message.metadata["agent_bridge.request_id"] = "old-request"
-        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
-            conn.execute("PRAGMA user_version=2")
-            conn.execute("INSERT INTO tasks (owner,task_id,task_data,context_id,state,status_timestamp_iso) "
-                         "VALUES (?,?,?,?,?,?)",
-                         ("", task.id, task.SerializeToString(), "", int(task.status.state),
-                          task.status.timestamp.ToJsonString()))
-            conn.execute("INSERT INTO request_bindings VALUES (?,?,?,?)",
-                         ("", "old-request", request.SerializeToString(deterministic=True), task.id))
-            conn.execute("INSERT INTO tasks (owner,task_id,task_data,context_id,state,status_timestamp_iso) "
-                         "VALUES (?,?,?,?,?,?)",
-                         ("", pending.id, pending.SerializeToString(), "", int(pending.status.state),
-                          pending.status.timestamp.ToJsonString()))
-            conn.commit()
-
-        store = SQLiteTaskStore(self.db_path)
-        migrated = await store.get(task.id)
-        self.assertEqual(migrated.id, "historic")
-        self.assertEqual(migrated.status.message.parts[0].text, "agent_bridge.error is user text")
-        self.assertEqual(migrated.metadata["agent_shuttle.error"]["code"], "old")
-        self.assertEqual(migrated.history[0].metadata["agent_shuttle.event"], "progress")
-        self.assertNotIn("agent_bridge.error", migrated.metadata)
-        self.assertEqual((await store.get("interrupted")).metadata["agent_shuttle.event"], "started")
-        self.assertEqual(await store.recover_interrupted(), 1)
-        recovered = await store.get("interrupted")
-        self.assertEqual(recovered.status.state, TaskState.TASK_STATE_FAILED)
-        self.assertEqual(recovered.metadata["agent_shuttle.error"]["code"], "server_restarted")
-        request.message.metadata["agent_shuttle.request_id"] = request.message.metadata[
-            "agent_bridge.request_id"]
-        del request.message.metadata["agent_bridge.request_id"]
-        retried = await store.request_task("old-request", request.SerializeToString(deterministic=True))
-        self.assertEqual(retried.id, task.id)
-        backups = list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3"))
-        self.assertEqual(len(backups), 1)
-        SQLiteTaskStore(self.db_path)
-        self.assertEqual(len(list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3"))), 1)
-
-    def test_v2_migration_conflict_rolls_back_and_keeps_backup(self) -> None:
-        SQLiteTaskStore(self.db_path)
-        task = _create_task("conflict")
-        task.metadata["agent_bridge.error"] = "old"
-        task.metadata["agent_shuttle.error"] = "new"
-        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
-            conn.execute("PRAGMA user_version=2")
-            conn.execute("INSERT INTO tasks (owner,task_id,task_data,context_id,state,status_timestamp_iso) "
-                         "VALUES (?,?,?,?,?,?)",
-                         ("", task.id, task.SerializeToString(), "", int(task.status.state),
-                          task.status.timestamp.ToJsonString()))
-            conn.commit()
-        with self.assertRaisesRegex(ValueError, "Conflicting stored metadata"):
-            SQLiteTaskStore(self.db_path)
-        with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
-            raw = conn.execute("SELECT task_data FROM tasks").fetchone()[0]
-        original = Task.FromString(raw)
-        self.assertIn("agent_bridge.error", original.metadata)
-        self.assertEqual(len(list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3"))), 1)
-
     def test_migration_waits_for_old_server_owner_to_stop(self) -> None:
         running = SQLiteTaskStore(self.db_path)
         running.acquire_owner()
@@ -132,7 +64,7 @@ class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
                 SQLiteTaskStore(self.db_path)
             with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
                 self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
-            self.assertFalse(list(self.db_path.parent.glob("tasks.sqlite.pre-0.7-*.sqlite3")))
+            self.assertFalse(list(self.db_path.parent.glob("tasks.sqlite.schema-backup-*.sqlite3")))
         finally:
             running.close()
 

@@ -34,8 +34,8 @@ from .profiles import ToolPolicy
 from .structured import encode_output_schema
 from .task_library import TaskManager
 from .runtime_context import NESTED_DISPATCH_ERROR, is_worker_context
+from .presentation import VERSION
 from .local_auth import LocalCredential
-from .metadata_migration import OLD_PREFIX
 
 
 class _LoopbackAuth:
@@ -87,10 +87,11 @@ class ShuttleExecutor(AgentExecutor):
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue, task.id, task.context_id)
-        if any(key.startswith(OLD_PREFIX) for key in context.message.metadata):
+        if any(key.startswith("agent_") and not key.startswith("agent_shuttle.")
+               for key in context.message.metadata):
             await updater.update_status(
                 TaskState.TASK_STATE_REJECTED,
-                new_text_message("Legacy A2A metadata keys are unsupported; use agent_shuttle.*"),
+                new_text_message("Unsupported agent metadata namespace; use agent_shuttle.*"),
             )
             return
         if not prompt:
@@ -319,13 +320,14 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         id=f"run_{name}",
         name=f"Run {name} task",
         description=(
-            f"Delegate a coding task to the local {name} agent and return its result. "
+            f"Delegate research, code review, implementation or a second opinion to the local {name} agent and return its result. "
+            "Available research tools depend on the agent and its enforceable policy. "
             "Optional message metadata agent_shuttle.model and agent_shuttle.reasoning_effort "
             "select the backend model and reasoning effort."
         ),
         input_modes=["text/plain"],
         output_modes=["text/plain"],
-        tags=["coding", "delegation", name],
+        tags=["coding", "delegation", "research", "review", "implementation", "second-opinion", name],
     )
     card = AgentCard(
         name=f"{name.title()} local agent",
@@ -333,7 +335,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
             f"Local {name} agent exposed through A2A by Agent Shuttle. "
             "Live models, reasoning efforts and account quotas are available at /shuttle/info."
         ),
-        version="0.1.0",
+        version=VERSION,
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         capabilities=AgentCapabilities(streaming=True, push_notifications=False),

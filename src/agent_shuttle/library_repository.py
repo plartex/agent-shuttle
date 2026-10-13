@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from time import time
 
-from .metadata_migration import backup_database, rename_json_metadata
+from .database_backup import backup_database
 
 
 class LibraryTaskRepository:
@@ -100,23 +100,6 @@ class LibraryTaskRepository:
             conn.commit()
             if version == 0:
                 conn.execute("BEGIN IMMEDIATE")
-                for task_id, seq, raw in conn.execute(
-                    "SELECT task_id, seq, data FROM events"
-                ).fetchall():
-                    if "agent_bridge." in raw:
-                        conn.execute(
-                            "UPDATE events SET data=? WHERE task_id=? AND seq=?",
-                            (rename_json_metadata(raw), task_id, seq),
-                        )
-                for column in ("usage", "details", "error", "warnings"):
-                    for task_id, raw in conn.execute(
-                        f"SELECT id, {column} FROM tasks WHERE {column} IS NOT NULL"
-                    ).fetchall():
-                        if "agent_bridge." in raw:
-                            conn.execute(
-                                f"UPDATE tasks SET {column}=? WHERE id=?",
-                                (rename_json_metadata(raw), task_id),
-                            )
                 conn.execute("PRAGMA user_version=1")
             conn.commit()
             self._owner, self._conn = owner, conn
