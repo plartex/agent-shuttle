@@ -415,7 +415,7 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                                      if backend_factory and manager._enforces_workspace(name)
                                      else ["shared"])
         if isinstance(backend, AntigravityCliBackend):
-            result["supported_tool_policies"] = ["no_tools", "read_only", "workspace_write"]
+            result["supported_tool_policies"] = ["no_tools", "read_only", "workspace_write", "web_research"]
             result["tool_policy_enforcement"] = "agy_pre_tool_use"
             if backend.dangerously_skip_permissions:
                 result["supported_tool_policies"].append("full_access")
@@ -424,6 +424,8 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
                 ("This server auto-approves all tools. " if backend.dangerously_skip_permissions
                  else "With no explicit policy, agy uses its settings; headless workspace file writes may be allowed. ")
                 + "Explicit scoped policies use a verified per-conversation PreToolUse hook. "
+                "web_research allows native web search, HTTP(S) page reading and retrieved content chunks only; "
+                "local files are blocked. read_only allows only local project file reading, not web research. "
                 "workspace_write allows native file edits only; shell, MCP, subagents and "
                 "external paths are blocked. This is tool gating, not an OS process sandbox."
             )

@@ -18,6 +18,8 @@ class ToolPolicy(str, Enum):
     READ_ONLY = "read_only"
     WORKSPACE_WRITE = "workspace_write"
     FULL_ACCESS = "full_access"
+    # Antigravity-only scope, intentionally outside the profile privilege ladder.
+    WEB_RESEARCH = "web_research"
 
 
 _POLICY_RANK = {
@@ -126,6 +128,8 @@ class AgentProfile:
             ))
         except ValueError as exc:
             raise ValueError("Unknown tool policy") from exc
+        if ToolPolicy.WEB_RESEARCH in {default, maximum}:
+            raise ValueError("web_research is supported only by the built-in Antigravity harness")
         if _POLICY_RANK[default] > _POLICY_RANK[maximum]:
             raise ValueError("default_tool_policy exceeds max_tool_policy")
         efforts = data.get("reasoning_efforts", [])
@@ -173,6 +177,8 @@ class AgentProfile:
             policy = ToolPolicy(tool_policy) if tool_policy is not None else self.default_tool_policy
         except ValueError as exc:
             raise ValueError(f"Unknown tool policy {tool_policy!r}") from exc
+        if ToolPolicy.WEB_RESEARCH in {policy, self.max_tool_policy}:
+            raise ValueError("web_research is supported only by the built-in Antigravity harness")
         if _POLICY_RANK[policy] > _POLICY_RANK[self.max_tool_policy]:
             raise ValueError(f"Tool policy {policy.value!r} exceeds profile maximum")
         effective_model = f"{self.provider}/{selected}" if self.runtime == "opencode" else selected

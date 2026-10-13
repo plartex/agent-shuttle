@@ -20,5 +20,6 @@ DELEGATION_DESCRIPTION = (
     "and advice directly; mentioning an agent or a second opinion alone does not request delegation. "
     "Shuttle manages local servers automatically. Inspect get_agent_info before selecting an "
     "enforceable tool policy; research including web access depends on that agent's capabilities. "
+    "For Antigravity web research choose web_research when advertised; read_only allows local files only. "
     "Preserve the user's explicit agent and model. Use submit_task for long work."
 )

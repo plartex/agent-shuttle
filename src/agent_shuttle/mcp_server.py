@@ -31,7 +31,7 @@ AgentId = Annotated[str, Field(description="Target: codex, antigravity, opencode
 Prompt = Annotated[str, Field(description="Complete delegated task, supplied context, constraints and requested output.")]
 Model = Annotated[str | None, Field(description="Exact remote model ID explicitly requested by the user; otherwise omit. Inspect get_agent_info for live models.")]
 Effort = Annotated[str | None, Field(description="User-requested remote reasoning effort; otherwise omit. Inspect supported values using get_agent_info.")]
-Policy = Annotated[str | None, Field(description="Least sufficient supported policy: no_tools, read_only, workspace_write or full_access. Inspect enforceability using get_agent_info first.")]
+Policy = Annotated[str | None, Field(description="Least sufficient supported policy: no_tools, read_only, workspace_write, web_research (Antigravity native web tools only), or full_access (unrestricted tools; requires user authorization). Antigravity read_only cannot access the web. Inspect get_agent_info first.")]
 Workspace = Annotated[str | None, Field(description="Existing absolute directory on the local host for the delegated task; otherwise use the server's configured workspace.")]
 
 
@@ -80,8 +80,9 @@ mcp = FastMCP(
         "capabilities and models; ask_agent for short tasks or submit_task for long work. "
         "Command discovery does not verify authentication. Web research depends on the "
         "selected agent's actual tools and policy. "
-        "Handle delegation setup yourself; users need not choose access policies. Use read_only "
-        "for reviews/research, workspace_write for requested file edits, and no_tools for supplied-context "
+        "Handle delegation setup yourself; users need not choose access policies. For Antigravity "
+        "web research use web_research if advertised; its read_only supports local files only. Use read_only "
+        "for local reviews, workspace_write for requested file edits, and no_tools for supplied-context "
         "generation when supported. Full_access requires authorization for unrestricted tools. "
         "Choose the workspace and least sufficient enforceable tool policy for the delegated task. "
         "Use get_agent_info to inspect supported_tool_policies, default_tool_policy and "
