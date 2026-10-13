@@ -157,7 +157,7 @@ class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
 
     def test_schema_initialization_and_version_rejection(self) -> None:
         # Initializing new DB sets schema version to CURRENT_SCHEMA_VERSION.
-        store = SQLiteTaskStore(self.db_path)
+        SQLiteTaskStore(self.db_path)
         with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
             cursor = conn.cursor()
             cursor.execute("PRAGMA user_version")
@@ -197,7 +197,7 @@ class TestSQLiteTaskStore(unittest.IsolatedAsyncioTestCase):
 
     def test_connections_closed_explicitly(self) -> None:
         # Verifies that initializing and reading from SQLiteTaskStore leaves no locked file handles on Windows.
-        store = SQLiteTaskStore(self.db_path)
+        SQLiteTaskStore(self.db_path)
         with contextlib.closing(sqlite3.connect(self.db_path)) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT count(*) FROM tasks")
