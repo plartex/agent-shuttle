@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,11 +15,25 @@ from agent_shuttle.local_auth import PeerAuthenticationError
 
 
 class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_codex_command_requires_matching_identity(self):
+        from agent_shuttle.managed import _verify_connection
+        with tempfile.TemporaryDirectory() as folder:
+            launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder), command=sys.executable)
+            identity = {"pid": 123, "backend": "codex_app_server", "workspace": folder}
+            with self.assertRaises(HarnessConfigurationMismatch):
+                _verify_connection(launch, identity)
+            identity["runtime"] = {"command": [sys.executable, "app-server", "--listen", "stdio://"]}
+            _verify_connection(launch, identity)
+            identity["runtime"]["command"][0] = "other-codex"
+            with self.assertRaises(HarnessConfigurationMismatch):
+                _verify_connection(launch, identity)
+
     async def test_untrusted_process_on_requested_port_gets_no_reused_port(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
-                                   command="C:/tools/codex.exe")
-            identity = {"pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve())}
+                                   command=sys.executable)
+            identity = {"pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
+                        "runtime": {"command": [sys.executable, "app-server", "--listen", "stdio://"]}}
             client = SimpleNamespace(identity=AsyncMock(side_effect=[
                 PeerAuthenticationError("proof failed"), identity]))
             process = MagicMock(pid=123, returncode=None)
@@ -31,6 +46,7 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(connection.url, "http://127.0.0.1:8767")
                     argv = popen.call_args.args[0]
                     self.assertEqual(argv[argv.index("--port") + 1], "8767")
+                    self.assertEqual(argv[argv.index("--codex-command") + 1], sys.executable)
             self.assertEqual(client.identity.await_args_list[0].args[0], launch.url)
             self.assertEqual(client.identity.await_args_list[1].args[0], "http://127.0.0.1:8767")
 
@@ -227,10 +243,11 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_started_server_stops_after_caller_error(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
-                                   command="agent-shuttle")
+                                   command=sys.executable)
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
-                                    "read_only_tools": True},
+                                    "read_only_tools": True,
+                                    "runtime": {"command": [sys.executable, "app-server", "--listen", "stdio://"]}},
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None

@@ -1,63 +1,56 @@
-"""Discover locally installed agent harness executables without starting them."""
+"""Discover user-installed harness commands without starting them."""
 
 from __future__ import annotations
 
 import importlib.util
 import os
 import shutil
-import sys
 from pathlib import Path
 
+COMMANDS = {"codex": "codex", "antigravity": "agy", "opencode": "opencode", "claude_code": "claude"}
 
-def _is_file(path: Path) -> bool:
-    try:
-        return path.is_file()
-    except OSError:
-        return False
+
+def _find_command(name: str, command: str | None = None) -> str | None:
+    variable = "AGY" if name == "antigravity" else name.upper()
+    explicit = command if command is not None else os.environ.get(f"AGENT_SHUTTLE_{variable}_COMMAND")
+    if explicit is not None and (not isinstance(explicit, str) or not explicit.strip()):
+        raise ValueError(f"{name} command must be a nonempty executable name or path")
+    search_path = None
+    if name == "codex" and not explicit:
+        spec = importlib.util.find_spec("codex_cli_bin")
+        bundled = Path(spec.origin).parent.resolve() if spec and spec.origin else None
+        search_path = os.pathsep.join(
+            entry for entry in os.get_exec_path()
+            if not bundled or not Path(entry).resolve().is_relative_to(bundled)
+        )
+    found = shutil.which(explicit or COMMANDS[name], path=search_path)
+    if not found and explicit and Path(explicit).is_file():
+        found = str(Path(explicit).resolve())
+    if not found and explicit:
+        raise FileNotFoundError(f"{name} command not found: {explicit}")
+    return str(Path(found).absolute()) if found else None
 
 
 def discover_harnesses(commands: dict[str, str] | None = None) -> dict[str, str]:
-    """Return available harnesses and launch commands.
-
-    Explicit commands override PATH discovery. Codex is provided by the
-    installed openai-codex SDK, so its value is the ``agent-shuttle`` backend.
-    This function never contacts a model or changes local state.
-    """
+    """Resolve explicit commands, environment overrides, then PATH (no installs)."""
     overrides = commands or {}
-    unknown = set(overrides) - {"codex", "antigravity", "opencode", "claude_code"}
+    unknown = set(overrides) - COMMANDS.keys()
     if unknown:
         raise ValueError(f"Unknown harnesses: {', '.join(sorted(unknown))}")
-    result: dict[str, str] = {}
-    if importlib.util.find_spec("openai_codex") is not None:
-        result["codex"] = "agent-shuttle"
-    for name, default in (("antigravity", "agy"), ("opencode", "opencode"),
-                          ("claude_code", "claude")):
-        environment_command = os.environ.get("AGENT_SHUTTLE_AGY_COMMAND") if name == "antigravity" else None
-        command = overrides.get(name) or environment_command or default
-        found = shutil.which(command)
-        if found is None and _is_file(Path(command)):
-            found = str(Path(command).resolve())
-        if found is None and name not in overrides and not environment_command:
-            home = Path.home()
-            if os.name == "nt":
-                candidates = {
-                    "antigravity": [home / ".local" / "bin" / "agy.exe",
-                                    Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe",
-                                    Path(__file__).resolve().parents[2] / "bin" / "agy.exe"],
-                    "opencode": [Path(os.environ.get("APPDATA", "")) / "npm" / "node_modules" /
-                                 "opencode-ai" / "bin" / "opencode.exe",
-                                 home / ".local" / "bin" / "opencode.exe"],
-                    "claude_code": [home / ".local" / "bin" / "claude.exe"],
-                }[name]
-            else:
-                executable = {"antigravity": "agy", "opencode": "opencode", "claude_code": "claude"}[name]
-                candidates = [home / ".local" / "bin" / executable]
-                if sys.platform == "darwin":
-                    candidates.extend(Path(prefix) / "bin" / executable
-                                      for prefix in ("/opt/homebrew", "/usr/local"))
-            found = next((str(path) for path in candidates if _is_file(path)), None)
-        if found is not None:
-            result[name] = found
-    if "codex" in overrides:
-        result["codex"] = overrides["codex"]
-    return result
+    return {name: found for name in COMMANDS if (found := _find_command(name, overrides.get(name)))}
+
+
+def codex_command(command: str | None = None) -> tuple[str, ...]:
+    """Resolve a native executable or the standard Windows npm launcher."""
+    found = _find_command("codex", command)
+    if not found:
+        raise FileNotFoundError("Codex is not installed; add codex to PATH or set AGENT_SHUTTLE_CODEX_COMMAND")
+    path = Path(found)
+    if os.name == "nt" and path.suffix.lower() in {".cmd", ".bat", ".ps1"}:
+        script = path.parent / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+        node = path.parent / "node.exe"
+        executable = str(node) if node.is_file() else shutil.which("node")
+        if not script.is_file() or not executable:
+            raise FileNotFoundError("Cannot launch Codex npm shim; configure the Codex executable explicitly")
+        return (str(Path(executable).absolute()), str(script))
+    return (found,)

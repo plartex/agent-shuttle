@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .discovery import codex_command
 from .agy_policy import SCOPED_POLICIES, ScopedAgyPolicy
 from .runtime_context import worker_env
 from .process_lifecycle import spawn_options, stop_async_process
@@ -241,9 +242,20 @@ def _codex_sandbox(sandbox_type, read_only: bool, tool_policy: str | None):
         raise ValueError(f"Unknown Codex tool_policy {policy!r}") from exc
 
 
+def _codex_config(command: tuple[str, ...], env: dict):
+    from openai_codex import CodexConfig
+
+    return CodexConfig(
+        codex_bin=command[0],
+        launch_args_override=(*command, "app-server", "--listen", "stdio://") if len(command) > 1 else None,
+        env={**env, "CODEX_HOME": env.get("CODEX_HOME") or str(Path.home() / ".codex")},
+    )
+
+
 class CodexBackend:
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, command: str | tuple[str, ...] | None = None):
         self.workspace = workspace.resolve(strict=True)
+        self.command = command if isinstance(command, tuple) else codex_command(command)
 
     async def run(
         self,
@@ -255,25 +267,13 @@ class CodexBackend:
         tool_policy: str | None = None,
         on_event=None,
     ) -> BackendResponse:
-        from openai_codex import AsyncCodex, CodexConfig, Sandbox
-
-        sandbox = _codex_sandbox(Sandbox, read_only, tool_policy)
-
-        # The Windows CLI needs an explicit home in some non-interactive shells.
-        codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-        config = CodexConfig(env=worker_env({**os.environ, "CODEX_HOME": codex_home}))
-        async with AsyncCodex(config) as codex:
-            thread = await codex.thread_start(
-                cwd=str(self.workspace),
-                model=model,
-                config=(
-                    {"model_reasoning_effort": reasoning_effort}
-                    if reasoning_effort is not None
-                    else None
-                ),
-                sandbox=sandbox,
-            )
-            return await _run_codex_thread(thread, prompt, on_event)
+        session = await self.open_session(
+            model, reasoning_effort=reasoning_effort, read_only=read_only, tool_policy=tool_policy,
+        )
+        try:
+            return await session.ask(prompt, on_event=on_event)
+        finally:
+            await session.close()
 
     async def open_session(
         self,
@@ -283,27 +283,7 @@ class CodexBackend:
         read_only: bool = False,
         tool_policy: str | None = None,
     ) -> BackendSession:
-        from openai_codex import AsyncCodex, CodexConfig, Sandbox
-
-        sandbox = _codex_sandbox(Sandbox, read_only, tool_policy)
-
-        codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-        codex = AsyncCodex(CodexConfig(env=worker_env({**os.environ, "CODEX_HOME": codex_home})))
-        await codex.__aenter__()
-        try:
-            thread = await codex.thread_start(
-                cwd=str(self.workspace),
-                model=model,
-                config=(
-                    {"model_reasoning_effort": reasoning_effort}
-                    if reasoning_effort is not None else None
-                ),
-                sandbox=sandbox,
-            )
-        except BaseException:
-            await codex.__aexit__(None, None, None)
-            raise
-        return _CodexSession(codex, thread)
+        return await self._session(None, model, reasoning_effort, read_only, tool_policy)
 
     async def resume_session(
         self,
@@ -314,22 +294,20 @@ class CodexBackend:
         read_only: bool = False,
         tool_policy: str | None = None,
     ) -> BackendSession:
-        from openai_codex import AsyncCodex, CodexConfig, Sandbox
+        return await self._session(native_id, model, reasoning_effort, read_only, tool_policy)
+
+    async def _session(self, native_id, model, reasoning_effort, read_only, tool_policy):
+        from openai_codex import AsyncCodex, Sandbox
 
         sandbox = _codex_sandbox(Sandbox, read_only, tool_policy)
-        codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-        codex = AsyncCodex(CodexConfig(env=worker_env({**os.environ, "CODEX_HOME": codex_home})))
+        codex = AsyncCodex(_codex_config(self.command, worker_env(os.environ.copy())))
         await codex.__aenter__()
         try:
-            thread = await codex.thread_resume(
-                native_id,
-                cwd=str(self.workspace),
-                model=model,
-                config=(
-                    {"model_reasoning_effort": reasoning_effort}
-                    if reasoning_effort is not None
-                    else None
-                ),
+            method = codex.thread_resume if native_id is not None else codex.thread_start
+            thread = await method(
+                *((native_id,) if native_id is not None else ()),
+                cwd=str(self.workspace), model=model,
+                config={"model_reasoning_effort": reasoning_effort} if reasoning_effort is not None else None,
                 sandbox=sandbox,
             )
         except BaseException:

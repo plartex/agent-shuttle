@@ -103,7 +103,8 @@ mcp = FastMCP(
         "a model for the remote agent; never copy the caller's model or a configured "
         "selected_model into this parameter. When the user names a remote model, "
         "pass that model ID exactly. When the user names a reasoning effort, "
-        "pass it exactly in reasoning_effort. "
+        "pass it exactly in reasoning_effort. If the requested model is rejected, "
+        "report the error; never substitute another model without user authorization. "
         "Return the remote result to the user."
     ),
 )
@@ -163,6 +164,9 @@ def _agent_launch(agent_id: str, workspace: str | None = None,
         entry = {"url": entry}
     if not isinstance(entry, dict):
         raise ValueError("Agent configuration must be an object or local URL")
+    command = entry.get("command")
+    if command is not None and (not isinstance(command, str) or not command.strip()):
+        raise ValueError("Agent command must be a nonempty executable name or path")
     profile = entry.get("profile")
     name = entry.get("harness", "acp" if profile and agent_id not in
                      {"codex", "antigravity", "opencode", "claude_code"} else agent_id)
@@ -176,7 +180,7 @@ def _agent_launch(agent_id: str, workspace: str | None = None,
     if name == "acp" and not profile:
         raise ValueError("ACP agent requires a JSON profile path")
     return HarnessLaunch(
-        name, url, root, model=model,
+        name, url, root, model=model, command=command,
         profile_path=Path(profile) if profile else None,
         tool_policy=(tool_policy if tool_policy is not None else entry.get("default_tool_policy")
                      or ("read_only" if name in {"codex", "antigravity"} else None)),
@@ -202,20 +206,6 @@ async def _managed_ask(launch: HarnessLaunch, prompt: str,
 
     async def use(active: HarnessLaunch) -> dict:
         async with connect_harness(active) as peer:
-            if active.name == "codex" and model and not getattr(peer, "started", True):
-                try:
-                    capabilities = await ShuttleClient().capabilities(peer.url)
-                    listed = {
-                        item.get("id") for item in capabilities.get("capabilities", {}).get("models", [])
-                        if isinstance(item, dict)
-                    }
-                except Exception as exc:
-                    _debug(f"codex: existing model catalog unavailable ({type(exc).__name__})")
-                    listed = set()
-                if model not in listed:
-                    _debug(f"codex: {model} absent from existing server catalog; starting isolated peer")
-                    async with connect_harness(replace(active, url=_free_local_url())) as fresh:
-                        return await send(fresh.url)
             _debug(f"{active.name}: shuttle ready, sending task")
             return await send(peer.url)
 

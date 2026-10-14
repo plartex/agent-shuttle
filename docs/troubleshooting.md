@@ -170,3 +170,5 @@ On Windows, child processes spawned by venvs or shell wrappers may remain orphan
   When using `connect_harness`, Agent Shuttle terminates the entire process tree using `taskkill /PID <pid> /T /F` on Windows before removing temporary directories.
 - **Persistent Servers:**
   Stop a foreground `agent-shuttle serve` process with Ctrl+C. If it was launched by another process manager, stop it through that manager after confirming its identity.
+
+See [installed harness selection](getting-started.md#installed-harness-selection).

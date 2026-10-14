@@ -119,7 +119,7 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "Configure harness"):
                 _agent_launch("local")
 
-    async def test_codex_uses_fresh_peer_when_running_catalog_lacks_requested_model(self):
+    async def test_codex_uses_same_peer_without_model_catalog_preflight(self):
         launches = []
 
         @asynccontextmanager
@@ -142,9 +142,32 @@ class McpRegistryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(answer["state"], "TASK_STATE_COMPLETED")
         self.assertEqual([launch.url for launch in launches],
-                         ["http://127.0.0.1:8765", "http://127.0.0.1:49152"])
-        self.assertEqual(launches[1].tool_policy, "read_only")
-        self.assertEqual(ask.call_args.args[0], "http://127.0.0.1:49152")
+                         ["http://127.0.0.1:8765"])
+        self.assertEqual(launches[0].tool_policy, "read_only")
+        self.assertEqual(ask.call_args.args[0], "http://127.0.0.1:8765")
+        self.assertEqual(ask.call_args.kwargs["model"], "gpt-6-sol")
+        ask.assert_awaited_once()
+
+    async def test_model_rejection_does_not_retry_or_replace_model(self):
+        launches = []
+        @asynccontextmanager
+        async def connected(launch):
+            launches.append(launch)
+            yield SimpleNamespace(url=launch.url)
+        with patch("agent_shuttle.mcp_server.connect_harness", connected), \
+             patch("agent_shuttle.mcp_server.ShuttleClient.ask", new_callable=AsyncMock,
+                   side_effect=RuntimeError("requested model unavailable")) as ask:
+            with self.assertRaisesRegex(RuntimeError, "model unavailable"):
+                await ask_codex("task", model="exact-model", reasoning_effort="high")
+        self.assertEqual(len(launches), 1)
+        ask.assert_awaited_once()
+        self.assertEqual(ask.call_args.kwargs["model"], "exact-model")
+        self.assertEqual(ask.call_args.kwargs["reasoning_effort"], "high")
+
+    def test_builtin_command_configuration_reaches_launch(self):
+        mapping = {"codex": {"command": "external-codex"}}
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": json.dumps(mapping)}):
+            self.assertEqual(_agent_launch("codex").command, "external-codex")
 
     async def test_legacy_custom_url_still_routes_to_running_server(self):
         result = SimpleNamespace(task_id="1", context_id=None, state="done", text="ok",

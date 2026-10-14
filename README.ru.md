@@ -258,3 +258,5 @@ python -m unittest discover -s tests -v
 - [Диагностика и устранение неполадок](docs/ru/troubleshooting.md)
 - [Участие в разработке](CONTRIBUTING.ru.md)
 - [Политика безопасности](SECURITY.ru.md)
+
+См. [выбор установленного harness](docs/ru/getting-started.md#выбор-установленного-harness).

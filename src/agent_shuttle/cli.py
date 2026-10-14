@@ -45,6 +45,7 @@ def main() -> None:
     serve.add_argument("--task-db", type=Path, help="Persist tasks and request bindings in this SQLite file")
     serve.add_argument("--execution-timeout-seconds", type=float, default=1800)
     serve.add_argument("--stall-timeout-seconds", type=float, default=1800)
+    serve.add_argument("--codex-command", default=os.environ.get("AGENT_SHUTTLE_CODEX_COMMAND"))
     serve.add_argument("--agy-command", default=os.environ.get("AGENT_SHUTTLE_AGY_COMMAND", "agy"))
     serve.add_argument("--agy-mode", choices=["cli", "sdk"], default="cli")
     serve.add_argument("--agy-python", type=Path)
@@ -65,6 +66,7 @@ def main() -> None:
     info = sub.add_parser("info", help="Read live models, reasoning efforts and account quotas")
     info.add_argument("url")
     discover = sub.add_parser("discover", help="List locally installed harnesses without starting them")
+    discover.add_argument("--codex-command")
     discover.add_argument("--agy-command")
     discover.add_argument("--opencode-command")
     discover.add_argument("--claude-command")
@@ -92,7 +94,7 @@ def main() -> None:
         return
     if args.command == "discover":
         overrides = {name: value for name, value in (
-            ("antigravity", args.agy_command), ("opencode", args.opencode_command),
+            ("codex", args.codex_command), ("antigravity", args.agy_command), ("opencode", args.opencode_command),
             ("claude_code", args.claude_command),
         ) if value}
         result = discover_harnesses(overrides)
@@ -139,14 +141,16 @@ def main() -> None:
             parser.error("--workspace must be a directory")
         name = args.agent
     if args.agent != "profile":
+        command = args.codex_command if args.agent == "codex" else args.agy_command
         backend, info_provider = build_builtin(
-            args.agent, workspace, command=args.agy_command, mode=args.agy_mode,
+            args.agent, workspace, command=command, mode=args.agy_mode,
             python=args.agy_python,
             dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
             turn_timeout_seconds=args.agy_turn_timeout_seconds or 300,
         )
+        command = backend.command if args.agent == "codex" else command
         backend_factory = lambda path: build_builtin(
-            args.agent, path, command=args.agy_command, mode=args.agy_mode,
+            args.agent, path, command=command, mode=args.agy_mode,
             python=args.agy_python,
             dangerously_skip_permissions=args.agy_dangerously_skip_permissions,
             turn_timeout_seconds=args.agy_turn_timeout_seconds or 300,

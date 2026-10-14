@@ -149,7 +149,7 @@ class WorkerLaunchTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {WORKER_CONTEXT_ENV: "coordinator"}), \
              patch("openai_codex.AsyncCodex", side_effect=capture):
             with self.assertRaises(StopAfterCapture):
-                await CodexBackend(Path.cwd()).open_session()
+                await CodexBackend(Path.cwd(), command=sys.executable).open_session()
         self.assertEqual(captured[0][WORKER_CONTEXT_ENV], "worker")
 
     async def test_antigravity_cli_gets_marker_in_both_launch_modes(self):
@@ -250,7 +250,7 @@ class NestedEntryPointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder:
             parent_database = Path(folder) / "tasks.sqlite3"
             argv = ["agent-shuttle", "serve", "codex", "--workspace", folder,
-                    "--port", "8765", "--task-db", str(parent_database)]
+                    "--port", "8765", "--task-db", str(parent_database), "--codex-command", sys.executable]
             with patch.dict(os.environ, {WORKER_CONTEXT_ENV: "worker"}), \
                  patch("sys.argv", argv), \
                  patch("agent_shuttle.cli._run_server") as run:

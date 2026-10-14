@@ -27,6 +27,17 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         backend.run.assert_not_awaited()
         info.fetch.assert_awaited_once_with(capabilities=True, usage=False)
 
+    async def test_codex_reports_command_version_and_version_probe_failure(self):
+        runtime = {"command": ["external", "app-server"], "version": None, "version_error": "TimeoutExpired"}
+        info = SimpleNamespace(fetch=AsyncMock(return_value={"runtime": runtime}))
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \
+             patch("agent_shuttle.doctor.discover_harnesses", return_value={"codex": "external"}), \
+             patch("agent_shuttle.doctor.build_builtin", return_value=(object(), info)):
+            report = await diagnose("codex")
+        self.assertEqual(report["status"], "OK")
+        self.assertIn("external", report["checks"][0]["message"])
+        self.assertIn("TimeoutExpired", report["checks"][0]["message"])
+
     async def test_antigravity_readiness_failure_is_not_reported_as_install_failure(self):
         info = SimpleNamespace(check_ready=AsyncMock(side_effect=RuntimeError("secret token")))
         with patch.dict(os.environ, {"AGENT_SHUTTLE_AGENTS_JSON": "{}"}), \

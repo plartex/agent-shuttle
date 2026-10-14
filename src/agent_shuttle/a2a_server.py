@@ -376,6 +376,8 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         result = {"agent": name, "backend": backend_name, "pid": os.getpid(),
                   "runtime_context": manager.runtime_context,
                   "dispatch_enabled": manager.runtime_context == "coordinator"}
+        if isinstance(backend, CodexBackend):
+            result["runtime"] = {"command": [*backend.command, "app-server", "--listen", "stdio://"]}
         database = getattr(handler.task_store, "path", None)
         result["task_storage"] = "sqlite" if isinstance(database, Path) else "memory"
         result["task_db_path"] = str(database) if isinstance(database, Path) else None
@@ -456,7 +458,10 @@ def make_app(name: str, backend: Backend, url: str, info_provider: InfoProvider 
         except Exception as exc:
             return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=503)
         if capabilities:
-            result.update(identity_data())
+            identity = identity_data()
+            if "runtime" in result:
+                identity.pop("runtime", None)
+            result.update(identity)
         return JSONResponse(result)
 
     async def close_session(request):

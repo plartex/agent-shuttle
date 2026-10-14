@@ -17,7 +17,7 @@ from typing import AsyncIterator
 from urllib.parse import urlparse
 
 from .client import ShuttleClient
-from .discovery import discover_harnesses
+from .discovery import discover_harnesses, codex_command
 from .profiles import AgentProfile
 from .local_auth import PeerAuthenticationError
 from .process_lifecycle import owns_pid, spawn_options, stop_sync_process
@@ -87,6 +87,11 @@ def _verify_backend(name: str, url: str, info: dict) -> None:
 
 def _verify_connection(launch: HarnessLaunch, info: dict) -> None:
     _verify_backend(launch.name, launch.url, info)
+    command = launch.command or os.environ.get("AGENT_SHUTTLE_CODEX_COMMAND")
+    if launch.name == "codex" and command:
+        expected_command = [*codex_command(command), "app-server", "--listen", "stdio://"]
+        if info.get("runtime", {}).get("command") != expected_command:
+            raise HarnessConfigurationMismatch(f"{launch.url} does not confirm the selected Codex command")
     expected = launch.workspace.resolve(strict=True)
     reported = info.get("workspace")
     if not isinstance(reported, str) or not Path(reported).is_absolute():
@@ -227,6 +232,8 @@ async def connect_harness(
             argv.extend(["--profile", str(profile_path)])
         if launch.task_db is not None:
             argv.extend(["--task-db", str(launch.task_db)])
+        if launch.name == "codex":
+            argv.extend(["--codex-command", command])
         if launch.name == "antigravity":
             argv.extend(["--agy-command", command])
             argv.extend(["--agy-turn-timeout-seconds", f"{launch.agy_turn_timeout_seconds:g}"])
