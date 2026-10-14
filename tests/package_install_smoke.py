@@ -101,6 +101,12 @@ def main() -> None:
                        "import agent_shuttle, json, sys; "
                        "print(json.dumps({'prefix': sys.prefix, 'module': agent_shuttle.__file__}))",
                        cwd=root, env=env)
+        run(str(library_python), "-c",
+            "import os; from unittest.mock import patch; from agent_shuttle import discover_harnesses; "
+            "os.environ.clear(); "
+            "probe=patch('agent_shuttle.discovery.shutil.which',return_value=None); "
+            "probe.start(); assert discover_harnesses() == {}",
+            cwd=root, env=env)
         import_info = json.loads(imported.stdout)
         if not Path(import_info["prefix"]).samefile(library_env):
             raise AssertionError("Python ran outside the project environment")

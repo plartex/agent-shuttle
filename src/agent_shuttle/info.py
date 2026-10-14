@@ -8,10 +8,12 @@ from enum import Enum
 import json
 import math
 import os
+import subprocess
 from pathlib import Path
 from typing import Protocol
 
-from .backends import _agy_authentication_error
+from .backends import _agy_authentication_error, _codex_config
+from .discovery import codex_command
 
 
 def _utc_now() -> str:
@@ -161,16 +163,28 @@ class AntigravitySdkInfo:
 
 
 class CodexInfo:
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, command: str | tuple[str, ...] | None = None):
         self.workspace = workspace.resolve(strict=True)
+        self.command = command if isinstance(command, tuple) else codex_command(command)
 
     async def fetch(self, *, capabilities: bool = True, usage: bool = True) -> dict:
-        from openai_codex import AsyncCodex, CodexConfig
+        from openai_codex import AsyncCodex
         from openai_codex.generated.v2_all import ConfigReadResponse, GetAccountRateLimitsResponse
 
-        codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-        config = CodexConfig(env={**os.environ, "CODEX_HOME": codex_home})
-        data = {"agent": "codex", "backend": "codex_app_server", "fetched_at": _utc_now()}
+        config = _codex_config(self.command, os.environ.copy())
+        runtime = {"command": [*self.command, "app-server", "--listen", "stdio://"], "version": None}
+        try:
+            version = await asyncio.to_thread(
+                subprocess.run, [*self.command, "--version"], capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=5, check=True,
+                env=config.env, cwd=self.workspace,
+            )
+            runtime["version"] = version.stdout.strip() or None
+            if runtime["version"] is None:
+                runtime["version_error"] = "empty version response"
+        except (OSError, subprocess.SubprocessError) as exc:
+            runtime["version_error"] = type(exc).__name__
+        data = {"agent": "codex", "backend": "codex_app_server", "fetched_at": _utc_now(), "runtime": runtime}
         async with AsyncCodex(config) as codex:
             if capabilities:
                 catalog = await codex.models()

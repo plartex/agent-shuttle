@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .discovery import codex_command
 from .acp_runtime import AcpRuntime
 from .backends import AntigravityCliBackend, AntigravitySdkBackend, CodexBackend
 from .claude_runtime import ClaudeCodeRuntime
@@ -13,8 +14,9 @@ from .profiled import ProfiledBackend, ProfiledInfo
 from .profiles import AgentProfile
 
 
-def _codex(workspace: Path, **kwargs):
-    return CodexBackend(workspace), CodexInfo(workspace)
+def _codex(workspace: Path, *, command=None, **kwargs):
+    resolved = command if isinstance(command, tuple) else codex_command(command)
+    return CodexBackend(workspace, resolved), CodexInfo(workspace, resolved)
 
 
 def _antigravity(workspace: Path, *, command="agy", mode="cli", python=None,

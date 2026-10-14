@@ -1,3 +1,4 @@
+import sys
 import asyncio
 import os
 import socket
@@ -98,7 +99,7 @@ class ShuttleProtocolTest(unittest.IsolatedAsyncioTestCase):
                 "command": ["agent", "acp"], "max_tool_policy": "read_only",
             })
             cases = (
-                (CodexBackend(root), ["read_only", "workspace_write", "full_access"], "workspace_write"),
+                (CodexBackend(root, command=sys.executable), ["read_only", "workspace_write", "full_access"], "workspace_write"),
                 (AntigravityCliBackend(root), ["no_tools", "read_only", "workspace_write", "web_research"], None),
                 (AntigravityCliBackend(root, dangerously_skip_permissions=True),
                  ["no_tools", "read_only", "workspace_write", "web_research", "full_access"], "full_access"),
@@ -170,7 +171,7 @@ class ShuttleProtocolTest(unittest.IsolatedAsyncioTestCase):
                 "max_tool_policy": "read_only",
             })
             for backend, supported in (
-                (CodexBackend(Path(folder)), True),
+                (CodexBackend(Path(folder), command=sys.executable), True),
                 (AntigravityCliBackend(Path(folder)), True),
                 (ProfiledBackend(profile, object()), True),
             ):

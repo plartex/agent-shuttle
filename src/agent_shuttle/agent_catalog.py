@@ -44,6 +44,8 @@ def inventory() -> dict:
                 if runtime not in {*BUILTINS, "acp"}:
                     raise ValueError("unsupported harness")
                 available = runtime in found
+                if entry.get("command"):
+                    available = runtime in discover_harnesses({runtime: entry["command"]})
                 if entry.get("profile"):
                     profile = AgentProfile.from_file(Path(entry["profile"]))
                     if profile.runtime != runtime:

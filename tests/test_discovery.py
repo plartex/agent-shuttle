@@ -1,77 +1,79 @@
-import unittest
 import os
 import sys
+import tempfile
+import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_shuttle import discover_harnesses
-from agent_shuttle import discovery
+from agent_shuttle.discovery import discover_harnesses, codex_command
+from agent_shuttle.backends import _codex_config
 
 
 class DiscoveryTests(unittest.TestCase):
-    def test_path_and_manual_commands(self):
-        def which(command):
-            return {"agy": "/bin/agy", "custom-open": "/bin/custom-open"}.get(command)
+    def test_precedence_and_real_commands(self):
+        with patch.dict(os.environ, {"AGENT_SHUTTLE_CODEX_COMMAND": "environment"}, clear=True), \
+             patch("agent_shuttle.discovery.shutil.which", side_effect=lambda cmd, **kw: str(Path(cmd).absolute())):
+            self.assertEqual(discover_harnesses({"codex": "explicit"})["codex"], str(Path("explicit").absolute()))
+            self.assertEqual(discover_harnesses()["codex"], str(Path("environment").absolute()))
 
-        with patch("agent_shuttle.discovery.shutil.which", side_effect=which), \
-             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=object()):
-            found = discover_harnesses({"opencode": "custom-open"})
-        self.assertEqual(found["codex"], "agent-shuttle")
-        self.assertEqual(found["antigravity"], "/bin/agy")
-        self.assertEqual(found["opencode"], "/bin/custom-open")
+    def test_invalid_explicit_command_never_falls_back(self):
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("agent_shuttle.discovery.shutil.which", return_value=None):
+            with self.assertRaises(FileNotFoundError):
+                discover_harnesses({"codex": "missing-agent"})
+            with patch.dict(os.environ, {"AGENT_SHUTTLE_AGY_COMMAND": "missing-agent"}):
+                with self.assertRaises(FileNotFoundError):
+                    discover_harnesses()
+
+    def test_sdk_alone_does_not_supply_a_harness(self):
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("agent_shuttle.discovery.shutil.which", return_value=None):
+            self.assertEqual(discover_harnesses(), {})
+            with self.assertRaises(FileNotFoundError):
+                codex_command()
+
+    def test_excludes_bundled_sdk_directories_only_for_automatic_search(self):
+        bundle = Path.cwd() / "site-packages" / "codex_cli_bin"
+        external = str(Path.cwd() / "user-bin")
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=SimpleNamespace(origin=str(bundle / "__init__.py"))), \
+             patch("agent_shuttle.discovery.os.get_exec_path", return_value=[str(bundle / "bin"), str(bundle / "codex-path"), external]), \
+             patch("agent_shuttle.discovery.shutil.which", return_value=None) as which:
+            discover_harnesses()
+            self.assertEqual(which.call_args_list[0].kwargs["path"], external)
+
+    def test_explicit_unicode_path_and_sdk_override(self):
+        with tempfile.TemporaryDirectory(prefix="harness space ") as folder:
+            executable = Path(folder) / "агент.exe"
+            executable.touch()
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(codex_command(str(executable)), (str(executable),))
 
     def test_unknown_harness_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unknown harnesses"):
             discover_harnesses({"unknown": "anything"})
 
-    @unittest.skipUnless(os.name == "nt", "Windows .exe fallback")
-    def test_opencode_can_be_found_outside_path(self):
-        with patch("agent_shuttle.discovery.shutil.which", return_value=None), \
-             patch("agent_shuttle.discovery.Path.is_file", autospec=True,
-                   side_effect=lambda path: str(path).endswith("opencode.exe")), \
-             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
-            found = discover_harnesses()
-        self.assertTrue(found["opencode"].endswith("opencode.exe"))
+    @unittest.skipUnless(os.name == "nt", "Windows npm launcher")
+    def test_npm_launcher_and_missing_node(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            shim = root / "codex.cmd"
+            shim.touch()
+            script = root / "node_modules/@openai/codex/bin/codex.js"
+            script.parent.mkdir(parents=True)
+            script.touch()
+            with patch("agent_shuttle.discovery.shutil.which", return_value=None):
+                with self.assertRaisesRegex(FileNotFoundError, "npm shim"):
+                    codex_command(str(shim))
+                node = root / "node.exe"
+                node.touch()
+                command = codex_command(str(shim))
+            self.assertEqual(command, (str(node), str(script)))
+            config = _codex_config(command, {})
+            self.assertEqual(config.launch_args_override, (*command, "app-server", "--listen", "stdio://"))
 
-    def test_inaccessible_install_directory_does_not_abort_discovery(self):
-        with patch("agent_shuttle.discovery.shutil.which", return_value=None), \
-             patch("agent_shuttle.discovery.Path.is_file", side_effect=PermissionError("denied")), \
-             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=object()):
-            self.assertEqual(discover_harnesses(), {"codex": "agent-shuttle"})
-
-    @unittest.skipUnless(os.name == "nt", "Windows source checkout executable")
-    def test_antigravity_is_found_in_source_checkout_bin(self):
-        bundled = Path(discovery.__file__).resolve().parents[2] / "bin" / "agy.exe"
-        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGY_COMMAND": ""}), \
-             patch("agent_shuttle.discovery.shutil.which", return_value=None), \
-             patch("agent_shuttle.discovery._is_file", side_effect=lambda path: path == bundled), \
-             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
-            found = discover_harnesses()
-        self.assertEqual(found["antigravity"], str(bundled))
-
-    def test_antigravity_respects_command_environment_override(self):
-        command = str(Path.cwd() / "manual" / "agy")
-        with patch.dict(os.environ, {"AGENT_SHUTTLE_AGY_COMMAND": command}), \
-             patch("agent_shuttle.discovery.shutil.which", return_value=None), \
-             patch("agent_shuttle.discovery._is_file", side_effect=lambda path: path == Path(command)), \
-             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
-            found = discover_harnesses()
-        self.assertEqual(Path(found["antigravity"]), Path(command))
-
-    @unittest.skipIf(os.name == "nt", "POSIX fallback names")
-    def test_posix_fallback_uses_executables_without_exe(self):
-        with patch("agent_shuttle.discovery.shutil.which", return_value=None), \
-             patch("agent_shuttle.discovery._is_file",
-                   side_effect=lambda path: str(path).endswith("/.local/bin/agy")), \
-             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
-            found = discover_harnesses()
-        self.assertTrue(found["antigravity"].endswith("/.local/bin/agy"))
-
-    @unittest.skipUnless(sys.platform == "darwin", "macOS Homebrew fallback")
-    def test_macos_homebrew_fallback(self):
-        with patch("agent_shuttle.discovery.shutil.which", return_value=None), \
-             patch("agent_shuttle.discovery._is_file",
-                   side_effect=lambda path: str(path) == "/opt/homebrew/bin/agy"), \
-             patch("agent_shuttle.discovery.importlib.util.find_spec", return_value=None):
-            found = discover_harnesses()
-        self.assertEqual(found["antigravity"], "/opt/homebrew/bin/agy")
+    def test_native_config_does_not_use_sdk_default(self):
+        config = _codex_config((sys.executable,), {})
+        self.assertEqual(config.codex_bin, sys.executable)
+        self.assertIsNone(config.launch_args_override)

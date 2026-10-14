@@ -93,7 +93,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(output.call_args.args[0]), {"models": ["local"]})
 
     def test_legacy_serve_backends_and_invalid_profile_option(self):
-        for agent, extra in (("codex", []), ("antigravity", []),
+        for agent, extra in (("codex", ["--codex-command", sys.executable]), ("antigravity", []),
                              ("antigravity", ["--agy-mode", "sdk"])):
             with self.subTest(agent=agent, extra=extra), tempfile.TemporaryDirectory() as folder, \
                  patch("sys.argv", ["agent-shuttle", "serve", agent,
@@ -126,7 +126,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(backend.call_args.kwargs["turn_timeout_seconds"], 42)
 
     def test_antigravity_full_permissions_flag_rejected_for_other_backends(self):
-        for agent, extra in (("codex", []), ("profile", []),
+        for agent, extra in (("codex", ["--codex-command", sys.executable]), ("profile", []),
                              ("antigravity", ["--agy-mode", "sdk"])):
             with self.subTest(agent=agent, extra=extra), tempfile.TemporaryDirectory() as folder, \
                  patch("sys.argv", ["agent-shuttle", "serve", agent, "--port", "8765",

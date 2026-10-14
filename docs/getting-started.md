@@ -15,7 +15,7 @@ Agent Shuttle interacts with local coding harnesses on your workstation. Make su
 - **uv** for the recommended MCP/CLI installation below. uv can obtain Python 3.11 or newer automatically; a separate Python installation is needed only for the checkout instructions.
 - For **Codex**:
   - The Codex desktop or CLI app installed and signed in.
-  - Python SDK dependency (`openai-codex`) is installed automatically by Agent Shuttle.
+  - Python SDK (`openai-codex`) is installed as transport; an installed Codex must be on PATH or configured explicitly.
 - For **Antigravity**:
   - The official `agy` CLI installed and authenticated (run `agy` interactively to sign in, then verify with `agy models`).
   - Test sign-in by running `agy models` in your terminal.
@@ -230,3 +230,20 @@ ask_codex(prompt="Refactor function in src/agent_shuttle/discovery.py", model="g
 - Review [Permissions & Safety Guide](permissions.md) before using `full_access`.
 - Learn about internal communication and protocol flow in [Architecture](architecture.md).
 - Consult [Troubleshooting](troubleshooting.md) for diagnostic procedures and common issues.
+
+## Installed harness selection
+
+Shuttle launches a user-installed harness: explicit command → environment override → PATH.
+Installer-directory searches and automatic selection of the Python SDK's bundled Codex are disabled.
+The SDK remains a transport dependency; installing Shuttle alone does not make a harness available.
+
+For Codex use `AGENT_SHUTTLE_CODEX_COMMAND`, `agent-shuttle serve codex --codex-command PATH`,
+or `command` in an `AGENT_SHUTTLE_AGENTS_JSON` entry. Verify with `agent-shuttle discover --codex-command PATH`.
+A command is an executable name or path, without shell arguments. An invalid explicit command fails without selecting another copy.
+Existing `AGENT_SHUTTLE_AGY_COMMAND` and profile settings remain supported.
+On Windows the standard Codex npm launcher uses its adjacent installed `codex.js` and Node; unknown launchers require an explicit binary path.
+
+Codex `get_agent_info` reports `runtime.command`, `runtime.version`, and a separate `runtime.version_error` if the version probe fails.
+`doctor codex` displays the same command and version without a model turn; `--smoke` explicitly enables a real turn.
+A model absent from the catalog does not trigger another server or model substitution: harness errors are returned to the caller.
+After upgrading Shuttle, restart MCP and any previously running Shuttle servers. Agent installations and user configuration are not modified automatically.

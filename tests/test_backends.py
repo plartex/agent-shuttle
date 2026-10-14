@@ -462,6 +462,28 @@ class AntigravitySessionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_same_external_runtime_for_run_start_and_resume(self):
+        from unittest.mock import AsyncMock, MagicMock
+        thread = SimpleNamespace(id="thread", run=AsyncMock(return_value=SimpleNamespace(final_response="OK", usage=None)))
+        runtime = MagicMock()
+        runtime.__aenter__ = AsyncMock(return_value=runtime)
+        runtime.__aexit__ = AsyncMock()
+        runtime.thread_start = AsyncMock(return_value=thread)
+        runtime.thread_resume = AsyncMock(return_value=thread)
+        backend = CodexBackend(Path.cwd(), command=sys.executable)
+        with patch("openai_codex.AsyncCodex", return_value=runtime) as sdk:
+            await backend.run("task", "requested-model", reasoning_effort="high", read_only=True)
+            session = await backend.open_session("requested-model", read_only=True)
+            await session.close()
+            session = await backend.resume_session("thread", "requested-model", read_only=True)
+            await session.close()
+        self.assertEqual(sdk.call_count, 3)
+        for call in sdk.call_args_list:
+            self.assertEqual(call.args[0].codex_bin, sys.executable)
+        for call in runtime.thread_start.call_args_list + runtime.thread_resume.call_args_list:
+            self.assertEqual(call.kwargs["model"], "requested-model")
+        self.assertEqual(runtime.thread_start.call_args_list[0].kwargs["config"], {"model_reasoning_effort": "high"})
+
     async def test_full_access_session_uses_sdk_full_access_sandbox(self):
         from openai_codex import Sandbox
         started = []
@@ -481,7 +503,7 @@ class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
                 return object()
 
         with patch("openai_codex.AsyncCodex", Codex):
-            session = await CodexBackend(Path.cwd()).open_session(tool_policy="full_access")
+            session = await CodexBackend(Path.cwd(), command=sys.executable).open_session(tool_policy="full_access")
             await session.close()
         self.assertEqual(started[0]["sandbox"], Sandbox.full_access)
 
@@ -522,7 +544,7 @@ class CodexSessionTests(unittest.IsolatedAsyncioTestCase):
                 return self.thread
 
         with patch("openai_codex.AsyncCodex", FakeCodex):
-            session = await CodexBackend(Path.cwd()).open_session(
+            session = await CodexBackend(Path.cwd(), command=sys.executable).open_session(
                 "test-model", reasoning_effort="low", read_only=True,
             )
             first = await session.ask("one")
@@ -562,7 +584,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 return Thread()
 
         with patch("openai_codex.AsyncCodex", Codex):
-            await CodexBackend(Path.cwd()).run("inspect", tool_policy="full_access")
+            await CodexBackend(Path.cwd(), command=sys.executable).run("inspect", tool_policy="full_access")
         self.assertEqual(instances[0].settings["sandbox"], Sandbox.full_access)
 
     async def test_agy_one_shot_timeout_kills_process(self):
@@ -613,7 +635,7 @@ class OneShotBackendTests(unittest.IsolatedAsyncioTestCase):
                 return Thread()
 
         with patch("openai_codex.AsyncCodex", Codex):
-            result = await CodexBackend(Path.cwd()).run("hello", "test", reasoning_effort="high")
+            result = await CodexBackend(Path.cwd(), command=sys.executable).run("hello", "test", reasoning_effort="high")
         self.assertEqual(result.text, "ok")
         self.assertEqual(result.usage["cache_read_tokens"], 2)
         self.assertNotIn("cache_write_tokens", result.usage)

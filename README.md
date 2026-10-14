@@ -267,3 +267,5 @@ Live integration tests against real models are separate, opt-in checks and are n
 - [Troubleshooting & Diagnostics](docs/troubleshooting.md)
 - [Contributing Guidelines](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
+
+See [installed harness selection](docs/getting-started.md#installed-harness-selection).

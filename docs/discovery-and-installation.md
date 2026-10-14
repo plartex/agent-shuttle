@@ -67,3 +67,5 @@ Preparing a manifest does not publish it. Public Registry availability and Docke
 ## Acceptance evidence
 
 Use the RU/EN query corpus under `tests/fixtures/discovery_queries.json`. Record actual catalog results separately from model-selection results. Static keyword checks do not prove semantic selection. Positive cases must preserve the requested agent and model; negative cases must not dispatch a task. Run `python tests/evaluate_discovery.py --output REPORT.json` explicitly to evaluate each case in a fresh Antigravity `no_tools` turn using only the advertised schemas. This consumes quota and evaluates schema-based selection, not an autonomous client conversation. Actual execution is separately covered by the Docker test harness.
+
+See [installed harness selection](getting-started.md#installed-harness-selection).

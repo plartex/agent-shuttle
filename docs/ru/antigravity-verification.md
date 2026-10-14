@@ -1,6 +1,6 @@
 # Проверка Agent Shuttle из Antigravity
 
-Проверка выполняется на локальной версии Agent Shuttle. В конфигурации MCP Antigravity укажите Python из окружения Agent Shuttle и модуль `agent_shuttle.mcp_server`. Для каталога проекта задайте `AGENT_SHUTTLE_WORKSPACE`; можно также передать `workspace` в самом вызове. Перезапустите MCP-подключение после изменения конфигурации или исходников. Для `gpt-6-sol` требуется `openai-codex>=0.155.1`: с установленной версией `0.154.0` воспроизводится ошибка 400 `model is not supported when using Codex with a ChatGPT account`.
+Проверка выполняется на локальной версии Agent Shuttle. В конфигурации MCP Antigravity укажите Python из окружения Agent Shuttle и модуль `agent_shuttle.mcp_server`. Для каталога проекта задайте `AGENT_SHUTTLE_WORKSPACE`; можно также передать `workspace` в самом вызове. Перезапустите MCP-подключение после изменения конфигурации или исходников. Текущий Shuttle использует установленный Codex из PATH или явно заданной команды; версия SDK больше не выбирает runtime. Историческая ошибка `model is not supported when using Codex with a ChatGPT account` требует проверки фактической команды и версии через `doctor codex`, без подмены модели.
 
 ## 1. Автозапуск A2A-сервера через MCP
 
@@ -15,7 +15,7 @@ workspace: C:/путь/к/agent-shuttle
 
 Ожидается `TASK_STATE_COMPLETED` и ответ `agent-shuttle 0.5.0` (для текущей версии исходников). MCP сам запустит временный локальный A2A-сервер, если подходящий сервер не работает, и завершит его после ответа. Если сервер уже работает, MCP сверит харнесс и рабочий каталог и повторно использует его.
 
-У Antigravity Desktop активная пользовательская конфигурация может находиться в `%USERPROFILE%/.gemini/config/mcp_config.json`, даже если в проекте есть `.agents/mcp_config.json`. Если ошибка сохраняется после перезапуска, проверьте глобальный файл: его `mcpServers.agent-shuttle.command` должен вести в окружение Agent Shuttle с `openai-codex>=0.155.1`, а аргументы должны запускать `agent_shuttle.mcp_server`. Локальные `.agents/mcp_config.json` и `.codex/config.toml` уже обновлены. Передайте `workspace` явно, если в конфигурации нет `AGENT_SHUTTLE_WORKSPACE`.
+У Antigravity Desktop активная пользовательская конфигурация может находиться в `%USERPROFILE%/.gemini/config/mcp_config.json`, даже если в проекте есть `.agents/mcp_config.json`. Если ошибка сохраняется после перезапуска, проверьте глобальный файл: его `mcpServers.agent-shuttle.command` должен вести в окружение Agent Shuttle, а аргументы должны запускать `agent_shuttle.mcp_server`. Сам Codex должен быть в PATH этого процесса либо задан через `AGENT_SHUTTLE_CODEX_COMMAND`. Перезапустите также ранее запущенный Shuttle-сервер. Передайте `workspace` явно, если в конфигурации нет `AGENT_SHUTTLE_WORKSPACE`.
 
 ## 2. Жизненный цикл задач
 

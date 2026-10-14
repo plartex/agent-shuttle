@@ -105,14 +105,18 @@ async def _builtin(target: str, found: dict[str, str], *, explicit: bool, smoke:
             await asyncio.wait_for(info.check_ready(), PROBE_TIMEOUT)
             message = "Command and model catalog responded; a model turn is unverified."
         else:
-            await asyncio.wait_for(info.fetch(capabilities=True, usage=False), PROBE_TIMEOUT)
-            message = "Codex App Server responded; account access and a model turn are unverified."
+            snapshot = await asyncio.wait_for(info.fetch(capabilities=True, usage=False), PROBE_TIMEOUT)
+            runtime = snapshot.get("runtime", {})
+            message = f"Codex App Server responded: {runtime.get('command')}; version: {runtime.get('version')}."
+            if runtime.get("version_error"):
+                message += f" Version probe failed: {runtime['version_error']}."
+            message += " Account access and a model turn are unverified."
         if smoke:
             return await _smoke(target, backend, "read_only" if target == "codex" else "no_tools")
         return _check(target, "OK", "connect", message,
                       f"Run doctor {target} --smoke to verify a model turn.")
     except Exception as exc:
-        return _check(target, "FAIL", "connect", f"Connection check failed: {_error(exc)}",
+        return _check(target, "FAIL", "connect", f"Connection check failed for {executable}: {_error(exc)}",
                       "Check the runtime installation and authentication; retry doctor.")
 
 
@@ -165,7 +169,9 @@ async def diagnose(agent_id: str | None = None, *, profile_path: Path | None = N
     if smoke and agent_id is None and profile_path is None:
         raise DoctorConfigError("--smoke requires one agent_id or --profile")
     mapping = _mapping()
-    found = discover_harnesses()
+    overrides = {key: value["command"] for key, value in mapping.items()
+                 if key in BUILTINS and isinstance(value, dict) and value.get("command")}
+    found = discover_harnesses(overrides)
     checks: list[dict] = []
     if profile_path is not None:
         checks.append(await _configured(_profile(profile_path), smoke=smoke))

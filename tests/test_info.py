@@ -1,3 +1,4 @@
+import sys
 import asyncio
 import json
 import tempfile
@@ -151,6 +152,19 @@ class AntigravityInfoTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexInfoTests(unittest.IsolatedAsyncioTestCase):
+    async def test_version_probe_timeout_is_reported_without_changing_runtime(self):
+        import subprocess
+        from unittest.mock import AsyncMock, MagicMock
+        runtime = MagicMock()
+        runtime.__aenter__ = AsyncMock(return_value=runtime)
+        runtime.__aexit__ = AsyncMock()
+        with patch("openai_codex.AsyncCodex", return_value=runtime) as sdk, \
+             patch("agent_shuttle.info.subprocess.run", side_effect=subprocess.TimeoutExpired("codex", 5)):
+            result = await CodexInfo(Path.cwd(), command=sys.executable).fetch(capabilities=False, usage=False)
+        self.assertEqual(result["runtime"]["version_error"], "TimeoutExpired")
+        self.assertIsNone(result["runtime"]["version"])
+        self.assertEqual(sdk.call_args.args[0].codex_bin, sys.executable)
+
     async def test_model_catalog_and_rate_limits(self):
         class ResetCredits:
             def model_dump(self, **kwargs):
@@ -189,8 +203,11 @@ class CodexInfoTests(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace(data=[model])
 
         with tempfile.TemporaryDirectory() as folder, \
-             patch("openai_codex.AsyncCodex", Codex):
-            result = await CodexInfo(Path(folder)).fetch()
+             patch("openai_codex.AsyncCodex", Codex), \
+             patch("agent_shuttle.info.subprocess.run", return_value=SimpleNamespace(stdout="codex-cli test")) as version_probe:
+            result = await CodexInfo(Path(folder), command=sys.executable).fetch()
+        self.assertEqual(result["runtime"]["version"], "codex-cli test")
+        self.assertEqual(version_probe.call_args.args[0], [sys.executable, "--version"])
         self.assertEqual(result["capabilities"]["selected_effort"], "high")
         self.assertIn("not an account access check", result["capabilities"]["model_access_note"])
         self.assertEqual(result["capabilities"]["models"][0]["efforts"], ["high"])
