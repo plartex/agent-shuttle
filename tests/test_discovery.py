@@ -48,7 +48,7 @@ class DiscoveryTests(unittest.TestCase):
             executable = Path(folder) / "агент.exe"
             executable.touch()
             with patch.dict(os.environ, {}, clear=True):
-                self.assertEqual(codex_command(str(executable)), (str(executable),))
+                self.assertTrue(Path(codex_command(str(executable))[0]).samefile(executable))
 
     def test_unknown_harness_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unknown harnesses"):
@@ -69,7 +69,7 @@ class DiscoveryTests(unittest.TestCase):
                 node = root / "node.exe"
                 node.touch()
                 command = codex_command(str(shim))
-            self.assertEqual(command, (str(node), str(script)))
+            self.assertEqual(tuple(Path(arg).resolve() for arg in command), (node.resolve(), script.resolve()))
             config = _codex_config(command, {})
             self.assertEqual(config.launch_args_override, (*command, "app-server", "--listen", "stdio://"))
 

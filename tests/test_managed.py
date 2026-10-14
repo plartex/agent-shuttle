@@ -243,10 +243,11 @@ class ManagedHarnessTests(unittest.IsolatedAsyncioTestCase):
     async def test_started_server_stops_after_caller_error(self):
         with tempfile.TemporaryDirectory() as folder:
             launch = HarnessLaunch("codex", "http://127.0.0.1:8765", Path(folder),
-                                   command=None)
+                                   command=sys.executable)
             client = SimpleNamespace(capabilities=AsyncMock(side_effect=[
                 OSError("offline"), {"pid": 123, "backend": "codex_app_server", "workspace": str(Path(folder).resolve()),
-                                    "read_only_tools": True},
+                                    "read_only_tools": True,
+                                    "runtime": {"command": [sys.executable, "app-server", "--listen", "stdio://"]}},
             ]))
             process = MagicMock(pid=123, returncode=None)
             process.poll.return_value = None
